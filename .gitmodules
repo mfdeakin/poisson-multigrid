@@ -1,0 +1,3 @@
+[submodule "xtensor"]
+	path = xtensor
+	url = https://github.com/QuantStack/xtensor
