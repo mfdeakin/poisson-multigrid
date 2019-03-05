@@ -3,12 +3,11 @@
 #define _POISSON_HPP_
 
 #include <functional>
+#include <iterator>
 
 #include "xtensor/xtensor.hpp"
 
 using real = double;
-
-constexpr real pi = 3.1415926535897932;
 
 class Mesh {
 public:
@@ -70,6 +69,8 @@ public:
   real interpolate(real x, real y) const noexcept;
   real operator()(real x, real y) const noexcept { return interpolate(x, y); }
 
+  const xt::xtensor<real, 2> data() const noexcept { return cva_; }
+
   int x_cells() const noexcept { return cva_.shape()[0] - 2 * ghost_cells; }
   int y_cells() const noexcept { return cva_.shape()[1] - 2 * ghost_cells; }
 
@@ -82,28 +83,44 @@ protected:
 
 class BoundaryConditions {
 public:
-  BoundaryConditions(const BoundaryConditions &src,
-                     const std::function<real(real, real)> &bc) noexcept
-      : dirichlet_(src.dirichlet_), neumann_(src.neumann_), bc_(bc) {}
+  enum class BC_Type { dirichlet, neumann };
+
+  static real homogeneous(real, real) { return 0.0; }
+
+  BoundaryConditions()
+      : left_t_(BC_Type::dirichlet), right_t_(BC_Type::dirichlet),
+        top_t_(BC_Type::dirichlet), bottom_t_(BC_Type::dirichlet),
+        left_bc_(&homogeneous), right_bc_(&homogeneous), top_bc_(&homogeneous),
+        bottom_bc_(&homogeneous) {}
+  BoundaryConditions(
+      const BC_Type left_t, const std::function<real(real, real)> &left_bc,
+      const BC_Type right_t, const std::function<real(real, real)> &right_bc,
+      const BC_Type top_t, const std::function<real(real, real)> &top_bc,
+      const BC_Type bottom_t, const std::function<real(real, real)> &bottom_bc);
 
   void apply(Mesh &mesh) const noexcept;
 
+  std::pair<BC_Type, std::function<real(real, real)>> left_bc() const noexcept {
+    return {left_t_, left_bc_};
+  }
+  std::pair<BC_Type, std::function<real(real, real)>> right_bc() const
+      noexcept {
+    return {right_t_, right_bc_};
+  }
+  std::pair<BC_Type, std::function<real(real, real)>> top_bc() const noexcept {
+    return {top_t_, top_bc_};
+  }
+  std::pair<BC_Type, std::function<real(real, real)>> bottom_bc() const
+      noexcept {
+    return {bottom_t_, bottom_bc_};
+  }
+
 protected:
-  // This class is to be subclassed and constructed there,
-  // adding cell indices on the boundaries which are dirichlet
-  // and neumann to their respective vectors
-  explicit BoundaryConditions(
-      const std::function<real(real, real)> &bc) noexcept
-      : dirichlet_(), neumann_(), bc_(bc) {}
-
-  std::pair<int, int> adjacent(const std::pair<int, int> &ghost_idx, int max_x,
-                               int max_y) const noexcept;
-
-  // A list of indices for cells in the boundary with the specified boundary
-  // condition
-  std::vector<std::pair<int, int>> dirichlet_;
-  std::vector<std::pair<int, int>> neumann_;
-  std::function<real(real, real)> bc_;
+  BC_Type left_t_, right_t_, top_t_, bottom_t_;
+  std::function<real(real, real)> left_bc_;
+  std::function<real(real, real)> right_bc_;
+  std::function<real(real, real)> top_bc_;
+  std::function<real(real, real)> bottom_bc_;
 };
 
 template <int mg_levels_> class PoissonFVMGSolver : public Mesh {
@@ -112,16 +129,55 @@ public:
 
   PoissonFVMGSolver(const std::pair<real, real> &corner_1,
                     const std::pair<real, real> &corner_2, const size_t x_cells,
-                    const size_t y_cells,
+                    const size_t y_cells, BoundaryConditions &bc,
                     const std::function<real(real, real)> &source) noexcept;
 
-  real solve(const real or_term = 1.5) noexcept;
+  template <typename Iterable>
+  real solve(const Iterable &iterations, const real or_term = 1.5) noexcept {
+    auto [end, max_delta] =
+        solve_int(iterations.begin(), iterations.end(), or_term);
+    assert(end == iterations.end());
+    return max_delta;
+  }
+
   void restrict(const Mesh &src) noexcept;
   real prolongate(Mesh &dest) const noexcept;
+
+  const Mesh &source() const noexcept { return source_; }
 
   template <int> friend class PoissonFVMGSolver;
 
 protected:
+  template <typename Iter>
+  typename std::enable_if<
+      std::is_same<typename std::iterator_traits<Iter>::value_type,
+                   std::pair<int, int>>::value,
+      std::pair<Iter, real>>::type
+  solve_int(Iter iterations, const Iter &end, const real or_term) noexcept {
+    auto [level, num_iter] = *iterations;
+    real max_delta = 0.0;
+    if (level == mg_levels_) {
+      for (int i = 0; i < num_iter; i++) {
+        max_delta += poisson_pgs_or(or_term);
+      }
+      iterations++;
+      if (iterations == end) {
+        return {iterations, max_delta};
+      }
+      level = iterations->first;
+      if (level > mg_levels_) {
+        return {iterations, max_delta};
+      }
+    }
+    residual();
+    multilev_.restrict(delta_);
+    multilev_.solve_int(iterations, end, or_term);
+    // This isn't strictly the maximum delta, but it does provide an
+    // upper bound on it which goes to zero as the solution converges
+    max_delta += multilev_.prolongate(*this);
+    return {iterations, max_delta};
+  }
+
   real delta(const int i, const int j) const noexcept;
   void residual() noexcept;
   real poisson_pgs_or(const real or_term = 1.5) noexcept;
@@ -135,18 +191,56 @@ protected:
 };
 
 template <> class PoissonFVMGSolver<1> : public Mesh {
+public:
   PoissonFVMGSolver(const std::pair<real, real> &corner_1,
                     const std::pair<real, real> &corner_2, const size_t x_cells,
-                    const size_t y_cells,
+                    const size_t y_cells, BoundaryConditions &bc,
                     const std::function<real(real, real)> &source) noexcept;
 
-  real solve(const real or_term = 1.5) noexcept;
+  // Each pair specifies the level the operation is to be performed on as the
+  // first parameter, and the number of pgs-or iterations to be performed on
+  // that level as the second parameter
+  template <typename Iterable>
+  real solve(const Iterable &iterations, const real or_term = 1.5) noexcept {
+    auto [end, max_delta] =
+        solve_int(iterations.begin(), iterations.end(), or_term);
+    assert(end == iterations.end());
+    return max_delta;
+  }
+
   void restrict(const Mesh &src) noexcept;
   real prolongate(Mesh &dest) const noexcept;
+
+  const Mesh &source() const noexcept { return source_; }
 
   template <int> friend class PoissonFVMGSolver;
 
 protected:
+  template <typename Iter>
+  typename std::enable_if<
+      std::is_same<typename std::iterator_traits<Iter>::value_type,
+                   std::pair<int, int>>::value,
+      std::pair<Iter, real>>::type
+  solve_int(Iter iterations, const Iter &end, const real or_term) noexcept {
+    auto [level, num_iter] = *iterations;
+    real max_delta = 0.0;
+    assert(level == 1);
+    for (int i = 0; i < num_iter; i++) {
+      max_delta += poisson_pgs_or(or_term);
+    }
+    iterations++;
+    if (iterations == end) {
+      return {iterations, max_delta};
+    }
+    level = iterations->first;
+    if (level > 1) {
+      return {iterations, max_delta};
+    }
+
+    // Error!
+    return {iterations, std::numeric_limits<real>::quiet_NaN()};
+  }
+
   real delta(const int i, const int j) const noexcept;
   void residual() noexcept;
   real poisson_pgs_or(const real or_term = 1.5) noexcept;

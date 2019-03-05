@@ -9,6 +9,7 @@ include_directories(./include ./xtensor/include)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 
 add_library(multigrid_poisson ./src/multigrid.cpp)
+target_compile_options(multigrid_poisson PUBLIC -fPIC)
 
 find_package(pybind11 CONFIG REQUIRED)
 
