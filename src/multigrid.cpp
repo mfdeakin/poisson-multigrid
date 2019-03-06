@@ -20,11 +20,6 @@ Mesh::Mesh(const std::pair<real, real> &corner_1,
       cva_(i, j) = 0.0;
     }
   }
-  // cva_(0, 0) = std::numeric_limits<real>::quiet_NaN();
-  // cva_(0, cva_.shape()[1] - 1) = std::numeric_limits<real>::quiet_NaN();
-  // cva_(cva_.shape()[0] - 1, 0) = std::numeric_limits<real>::quiet_NaN();
-  // cva_(cva_.shape()[0] - 1, cva_.shape()[1] - 1) =
-  //     std::numeric_limits<real>::quiet_NaN();
 }
 
 Mesh::Mesh(const std::pair<real, real> &corner_1,
@@ -36,42 +31,28 @@ Mesh::Mesh(const std::pair<real, real> &corner_1,
       cva_(i, j) = f(median_x(i - ghost_cells), median_y(j - ghost_cells));
     }
   }
-  // cva_(0, 0) = std::numeric_limits<real>::quiet_NaN();
-  // cva_(0, cva_.shape()[1] - 1) = std::numeric_limits<real>::quiet_NaN();
-  // cva_(cva_.shape()[0] - 1, 0) = std::numeric_limits<real>::quiet_NaN();
-  // cva_(cva_.shape()[0] - 1, cva_.shape()[1] - 1) =
-  //     std::numeric_limits<real>::quiet_NaN();
 }
 
 // Use bilinear interpolation to estimate the value at the requested point
+// Note that we can use this to implement multigrid for mesh size ratios
+// other than factors of 2
 real Mesh::interpolate(real x, real y) const noexcept {
-  const int i = x_idx(x);
-  const int j = y_idx(y);
-  const auto interp_cell = [=](real coord, real median, int idx, int max_idx) {
-    if (coord < median) {
-      if (idx > -ghost_cells) {
-        return idx - 1;
-      } else {
-        // Nothing to do except assume a constant function here
-        return idx;
-      }
-    } else {
-      if (idx < max_idx - 1) {
-        return idx + 1;
-      } else {
-        // Nothing to do except assume a constant function here
-        return idx;
-      }
-    }
-  };
-  const int i_interp = interp_cell(x, median_x(i), i, cva_.shape()[0]);
-  const int j_interp = interp_cell(y, median_y(j), j, cva_.shape()[1]);
-  const real x_off = std::abs(median_x(i) - x) / dx_;
-  const real y_off = std::abs(median_y(i) - y) / dy_;
-  return (1.0 - x_off) * ((1.0 - y_off) * cv_average(i, j) +
-                          y_off * cv_average(i, j_interp)) +
-         x_off * ((1.0 - y_off) * cv_average(i_interp, j) +
-                  y_off * cv_average(i_interp, j_interp));
+  const int left_cell = x_idx(x - dx_ / 2.0);
+  const int right_cell = left_cell + 1;
+  const int top_cell = y_idx(y + dy_ / 2.0);
+  const int bottom_cell = top_cell - 1;
+  assert(left_cell >= -1);
+  assert(right_cell <= cells_x());
+  assert(bottom_cell >= -1);
+  assert(top_cell <= cells_y());
+  const real left_weight = (median_x(right_cell) - x) / dx_;
+  const real bottom_weight = (median_y(top_cell) - y) / dy_;
+  return left_weight *
+             (bottom_weight * cv_average(left_cell, bottom_cell) +
+              (1.0 - bottom_weight) * cv_average(left_cell, top_cell)) +
+         (1.0 - left_weight) *
+             (bottom_weight * cv_average(right_cell, bottom_cell) +
+              (1.0 - bottom_weight) * cv_average(right_cell, top_cell));
 }
 
 BoundaryConditions::BoundaryConditions(
@@ -148,7 +129,7 @@ real PoissonFVMGSolverBase::delta(const int i, const int j) const noexcept {
   assert(j < cells_y());
   return ((cv_average(i - 1, j) + cv_average(i + 1, j)) +
           (cv_average(i, j - 1) + cv_average(i, j + 1))) /
-             4.0 -
+             4.0 +
          source_[{i, j}] - cv_average(i, j);
 }
 
@@ -182,7 +163,8 @@ void PoissonFVMGSolverBase::restrict(const Mesh &src) noexcept {
       source_[{i, j}] =
           0.25 * (src[{2 * i, 2 * j}] + src[{2 * i, 2 * j + 1}] +
                   src[{2 * i + 1, 2 * j}] + src[{2 * i + 1, 2 * j + 1}]);
-      cv_average(i, j) = 0.0;
+      // This is (not surprisingly...) a bad idea
+      // cv_average(i, j) = 0.0;
     }
   }
 }
@@ -192,8 +174,12 @@ real PoissonFVMGSolverBase::prolongate(Mesh &dest) const noexcept {
   assert(dest.cells_y() == 2 * cells_y());
   real max_diff = -std::numeric_limits<real>::infinity();
   for (int i = 0; i < dest.cells_x(); i++) {
+    const real x = dest.median_x(i);
     for (int j = 0; j < dest.cells_y(); j++) {
-      const real diff = this->cv_average(i / 2, j / 2);
+      const real y = dest.median_y(j);
+      // The less accurate alternative
+      // const real diff = cv_average(i / 2, j / 2);
+      const real diff = interpolate(x, y);
       max_diff = std::max(max_diff, diff);
       dest[{i, j}] += diff;
     }

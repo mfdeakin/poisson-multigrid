@@ -194,7 +194,6 @@ protected:
       const int level = iterations->first;
       if (level == mg_levels_) {
         const int num_iter = iterations->second;
-        printf("Iterating at level %d, %d times\n", level, num_iter);
         for (int i = 0; i < num_iter; i++) {
           max_delta += poisson_pgs_or(or_term);
         }
@@ -253,10 +252,8 @@ protected:
   solve_int(Iter iterations, const Iter &end, const real or_term) noexcept {
     real max_delta = 0.0;
     while (iterations != end && iterations->first <= 1) {
-      const int level = iterations->first;
-      assert(level == mg_levels_);
+      assert(iterations->first == mg_levels_);
       const int num_iter = iterations->second;
-      printf("Iterating at level %d, %d times\n", level, num_iter);
       for (int i = 0; i < num_iter; i++) {
         max_delta += poisson_pgs_or(or_term);
       }
