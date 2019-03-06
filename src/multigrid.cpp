@@ -6,25 +6,41 @@
 #include "multigrid.hpp"
 
 Mesh::Mesh(const std::pair<real, real> &corner_1,
-           const std::pair<real, real> &corner_2, const size_t x_cells,
-           const size_t y_cells) noexcept
+           const std::pair<real, real> &corner_2, const size_t cells_x,
+           const size_t cells_y) noexcept
     : min_x_(std::min(corner_1.first, corner_2.first)),
       max_x_(std::max(corner_1.first, corner_2.first)),
       min_y_(std::min(corner_1.second, corner_2.second)),
       max_y_(std::max(corner_1.second, corner_2.second)),
-      dx_((max_x_ - min_x_) / x_cells), dy_((max_y_ - min_y_) / y_cells),
-      cva_(std::array<size_t, 2>{x_cells + 2 * ghost_cells,
-                                 y_cells + 2 * ghost_cells}) {}
+      dx_((max_x_ - min_x_) / cells_x), dy_((max_y_ - min_y_) / cells_y),
+      cva_(std::array<size_t, 2>{cells_x + 2 * ghost_cells,
+                                 cells_y + 2 * ghost_cells}) {
+  for (size_t i = 0; i < cva_.shape()[0]; i++) {
+    for (size_t j = 0; j < cva_.shape()[1]; j++) {
+      cva_(i, j) = 0.0;
+    }
+  }
+  // cva_(0, 0) = std::numeric_limits<real>::quiet_NaN();
+  // cva_(0, cva_.shape()[1] - 1) = std::numeric_limits<real>::quiet_NaN();
+  // cva_(cva_.shape()[0] - 1, 0) = std::numeric_limits<real>::quiet_NaN();
+  // cva_(cva_.shape()[0] - 1, cva_.shape()[1] - 1) =
+  //     std::numeric_limits<real>::quiet_NaN();
+}
 
 Mesh::Mesh(const std::pair<real, real> &corner_1,
-           const std::pair<real, real> &corner_2, const size_t x_cells,
-           const size_t y_cells, std::function<real(real, real)> f) noexcept
-    : Mesh(corner_1, corner_2, x_cells, y_cells) {
+           const std::pair<real, real> &corner_2, const size_t cells_x,
+           const size_t cells_y, std::function<real(real, real)> f) noexcept
+    : Mesh(corner_1, corner_2, cells_x, cells_y) {
   for (int i = 0; i < cva_.shape()[0]; i++) {
     for (int j = 0; j < cva_.shape()[1]; j++) {
       cva_(i, j) = f(median_x(i - ghost_cells), median_y(j - ghost_cells));
     }
   }
+  // cva_(0, 0) = std::numeric_limits<real>::quiet_NaN();
+  // cva_(0, cva_.shape()[1] - 1) = std::numeric_limits<real>::quiet_NaN();
+  // cva_(cva_.shape()[0] - 1, 0) = std::numeric_limits<real>::quiet_NaN();
+  // cva_(cva_.shape()[0] - 1, cva_.shape()[1] - 1) =
+  //     std::numeric_limits<real>::quiet_NaN();
 }
 
 // Use bilinear interpolation to estimate the value at the requested point
@@ -68,26 +84,28 @@ BoundaryConditions::BoundaryConditions(
       bottom_bc_(bottom_bc) {}
 
 void BoundaryConditions::apply(Mesh &mesh) const noexcept {
-  const real y_top = mesh.median_y(0);
-  const real y_bottom = mesh.median_y(mesh.y_cells());
-  for (int i = 0; i < mesh.x_cells(); i++) {
+  const real y_top = mesh.top_y(mesh.cells_y() - 1);
+  const real y_bottom = mesh.bottom_y(0);
+  for (int i = 0; i < mesh.cells_x(); i++) {
     const real x = mesh.median_x(i);
     real bndry_val = mesh[{i, 0}];
     if (top_t_ == BC_Type::dirichlet) {
       bndry_val = -bndry_val;
     }
     mesh[{i, -1}] = 2.0 * bottom_bc_(x, y_bottom) + bndry_val;
-
-    bndry_val = mesh[{i, mesh.y_cells()}];
+  }
+  for (int i = 0; i < mesh.cells_x(); i++) {
+    const real x = mesh.median_x(i);
+    real bndry_val = mesh[{i, mesh.cells_y() - 1}];
     if (top_t_ == BC_Type::dirichlet) {
       bndry_val = -bndry_val;
     }
-    mesh[{i, mesh.y_cells() + 1}] = 2.0 * top_bc_(x, y_top) + bndry_val;
+    mesh[{i, mesh.cells_y()}] = 2.0 * top_bc_(x, y_top) + bndry_val;
   }
 
-  const real x_left = mesh.median_x(0);
-  const real x_right = mesh.median_x(mesh.x_cells());
-  for (int j = 0; j < mesh.y_cells(); j++) {
+  const real x_left = mesh.left_x(0);
+  const real x_right = mesh.right_x(mesh.cells_x() - 1);
+  for (int j = 0; j < mesh.cells_y(); j++) {
     const real y = mesh.median_y(j);
     real bndry_val = mesh[{0, j}];
     if (left_t_ == BC_Type::dirichlet) {
@@ -95,193 +113,141 @@ void BoundaryConditions::apply(Mesh &mesh) const noexcept {
     }
     mesh[{-1, j}] = 2.0 * left_bc_(x_left, y) + bndry_val;
 
-    bndry_val = mesh[{mesh.x_cells(), j}];
+    bndry_val = mesh[{mesh.cells_x() - 1, j}];
     if (right_t_ == BC_Type::dirichlet) {
       bndry_val = -bndry_val;
     }
-    mesh[{mesh.x_cells() + 1, j}] = 2.0 * right_bc_(x_right, y) + bndry_val;
+    mesh[{mesh.cells_x(), j}] = 2.0 * right_bc_(x_right, y) + bndry_val;
   }
 }
 
 real zero_source(real, real) { return 0.0; }
 
-BoundaryConditions mg_bc(BoundaryConditions &src) {
+PoissonFVMGSolverBase::PoissonFVMGSolverBase(
+    const std::pair<real, real> &corner_1,
+    const std::pair<real, real> &corner_2, const size_t cells_x,
+    const size_t cells_y, const BoundaryConditions &bc) noexcept
+    : Mesh(corner_1, corner_2, cells_x, cells_y), bc_(bc),
+      source_(corner_1, corner_2, cells_x, cells_y),
+      delta_(corner_1, corner_2, cells_x, cells_y) {}
+
+PoissonFVMGSolverBase::PoissonFVMGSolverBase(
+    const std::pair<real, real> &corner_1,
+    const std::pair<real, real> &corner_2, const size_t cells_x,
+    const size_t cells_y, const BoundaryConditions &bc,
+    const std::function<real(real, real)> &source) noexcept
+    : Mesh(corner_1, corner_2, cells_x, cells_y), bc_(bc),
+      source_(corner_1, corner_2, cells_x, cells_y, source),
+      delta_(corner_1, corner_2, cells_x, cells_y) {}
+
+real PoissonFVMGSolverBase::delta(const int i, const int j) const noexcept {
+  // Computes the difference between the Laplacian and the source term
+  assert(i >= 0);
+  assert(i < cells_x());
+  assert(j >= 0);
+  assert(j < cells_y());
+  return ((cv_average(i - 1, j) + cv_average(i + 1, j)) +
+          (cv_average(i, j - 1) + cv_average(i, j + 1))) /
+             4.0 -
+         source_[{i, j}] - cv_average(i, j);
+}
+
+void PoissonFVMGSolverBase::residual() noexcept {
+  for (int i = 0; i < this->cells_x(); i++) {
+    for (int j = 0; j < this->cells_y(); j++) {
+      delta_[{i, j}] = delta(i, j);
+    }
+  }
+}
+
+real PoissonFVMGSolverBase::poisson_pgs_or(const real or_term) noexcept {
+  real max_diff = -std::numeric_limits<real>::infinity();
+  bc_.apply(*this);
+  for (int i = 0; i < cells_x(); i++) {
+    for (int j = 0; j < cells_y(); j++) {
+      const real diff = or_term * delta(i, j);
+      max_diff = std::max(max_diff, diff);
+      cv_average(i, j) += diff;
+    }
+  }
+  return max_diff;
+}
+
+void PoissonFVMGSolverBase::restrict(const Mesh &src) noexcept {
+  // We're assuming the cells are uniform
+  assert(src.cells_x() == 2 * cells_x());
+  assert(src.cells_y() == 2 * cells_y());
+  for (int i = 0; i < cells_x(); i++) {
+    for (int j = 0; j < cells_y(); j++) {
+      source_[{i, j}] =
+          0.25 * (src[{2 * i, 2 * j}] + src[{2 * i, 2 * j + 1}] +
+                  src[{2 * i + 1, 2 * j}] + src[{2 * i + 1, 2 * j + 1}]);
+      cv_average(i, j) = 0.0;
+    }
+  }
+}
+
+real PoissonFVMGSolverBase::prolongate(Mesh &dest) const noexcept {
+  assert(dest.cells_x() == 2 * cells_x());
+  assert(dest.cells_y() == 2 * cells_y());
+  real max_diff = -std::numeric_limits<real>::infinity();
+  for (int i = 0; i < dest.cells_x(); i++) {
+    for (int j = 0; j < dest.cells_y(); j++) {
+      const real diff = this->cv_average(i / 2, j / 2);
+      max_diff = std::max(max_diff, diff);
+      dest[{i, j}] += diff;
+    }
+  }
+  return max_diff;
+}
+
+BoundaryConditions mg_bc(const BoundaryConditions &src) {
   return BoundaryConditions(
       src.left_bc().first, zero_source, src.right_bc().first, zero_source,
       src.bottom_bc().first, zero_source, src.top_bc().first, zero_source);
 }
 
-template <int mg_levels>
-PoissonFVMGSolver<mg_levels>
-coarsened(const std::pair<real, real> &corner_1,
-          const std::pair<real, real> &corner_2, const size_t x_cells,
-          const size_t y_cells, BoundaryConditions bc,
-          const std::function<real(real, real)> &source) {
-  assert(x_cells % 2 == 0);
-  assert(y_cells % 2 == 0);
-  BoundaryConditions coarse_bc(mg_bc(bc));
-  PoissonFVMGSolver<mg_levels> mg(corner_1, corner_2, x_cells / 2, y_cells / 2,
-                                  coarse_bc, source);
-  return mg;
+template <int mg_levels_>
+PoissonFVMGSolver<mg_levels_>::PoissonFVMGSolver(
+    const std::pair<real, real> &corner_1,
+    const std::pair<real, real> &corner_2, const size_t cells_x,
+    const size_t cells_y, const BoundaryConditions &bc) noexcept
+    : PoissonFVMGSolverBase(corner_1, corner_2, cells_x, cells_y, bc),
+      multilev_(corner_1, corner_2, cells_x / 2, cells_y / 2, mg_bc(bc),
+                zero_source) {
+  assert(cells_x % (1 << (mg_levels_ - 1)) == 0);
+  assert(cells_y % (1 << (mg_levels_ - 1)) == 0);
 }
 
 template <int mg_levels_>
 PoissonFVMGSolver<mg_levels_>::PoissonFVMGSolver(
     const std::pair<real, real> &corner_1,
-    const std::pair<real, real> &corner_2, const size_t x_cells,
-    const size_t y_cells, BoundaryConditions &bc,
+    const std::pair<real, real> &corner_2, const size_t cells_x,
+    const size_t cells_y, const BoundaryConditions &bc,
     const std::function<real(real, real)> &source) noexcept
-    : Mesh(corner_1, corner_2, x_cells, y_cells),
-      multilev_(coarsened<mg_levels_ - 1>(corner_1, corner_2, x_cells / 2,
-                                          y_cells / 2, bc, zero_source)),
-      bc_(bc), source_(corner_1, corner_2, x_cells, y_cells),
-      delta_(corner_1, corner_2, x_cells, y_cells) {
-	assert(x_cells % (1 << mg_levels_) == 0);
-	assert(y_cells % (1 << mg_levels_) == 0);
-  for (int i = -1; i < x_cells + 1; i++) {
-    for (int j = -1; j < y_cells + 1; j++) {
-      const real x = this->median_x(i);
-      const real y = this->median_y(j);
-      source_[{i, j}] = source(x, y);
-    }
-  }
+    : PoissonFVMGSolverBase(corner_1, corner_2, cells_x, cells_y, bc, source),
+      multilev_(corner_1, corner_2, cells_x / 2, cells_y / 2, mg_bc(bc),
+                zero_source) {
+  assert(cells_x % (1 << (mg_levels_ - 1)) == 0);
+  assert(cells_y % (1 << (mg_levels_ - 1)) == 0);
 }
 
-template <int mg_levels_>
-real PoissonFVMGSolver<mg_levels_>::delta(const int i, const int j) const
-    noexcept {
-  // Computes the difference between the Laplacian and the source term
-  return ((this->cv_average(i - 1, j) + this->cv_average(i + 1, j)) +
-          (this->cv_average(i, j - 1) + this->cv_average(i, j + 1))) /
-             4.0 +
-         source_[{i, j}] - this->cv_average(i, j);
-}
+PoissonFVMGSolver<1>::PoissonFVMGSolver(const std::pair<real, real> &corner_1,
+                                        const std::pair<real, real> &corner_2,
+                                        const size_t cells_x,
+                                        const size_t cells_y,
+                                        const BoundaryConditions &bc) noexcept
+    : PoissonFVMGSolverBase(corner_1, corner_2, cells_x, cells_y, bc) {}
 
-template <int mg_levels_>
-void PoissonFVMGSolver<mg_levels_>::residual() noexcept {
-  for (int i = 0; i < this->x_cells(); i++) {
-    for (int j = 0; j < this->y_cells(); j++) {
-      delta_[{i, j}] = delta(i, j);
-    }
-  }
-}
-
-template <int mg_levels_>
-real PoissonFVMGSolver<mg_levels_>::poisson_pgs_or(
-    const real or_term) noexcept {
-  real max_diff = -std::numeric_limits<real>::infinity();
-  for (int i = 0; i < this->x_cells(); i++) {
-    for (int j = 0; j < this->y_cells(); j++) {
-      const real diff = or_term * delta(i, j);
-      max_diff = std::max(max_diff, diff);
-      this->cv_average(i, j) += or_term * diff;
-    }
-  }
-  return max_diff;
-}
-
-template <int mg_levels_>
-void PoissonFVMGSolver<mg_levels_>::restrict(const Mesh &src) noexcept {
-  // We're assuming cells
-  assert(src.x_cells() == 2 * this->x_cells());
-  assert(src.y_cells() == 2 * this->y_cells());
-  for (int i = 0; i < this->x_cells(); i++) {
-    for (int j = 0; j < this->y_cells(); j++) {
-      this->source_[{i, j}] =
-          0.25 * (src[{2 * i, 2 * j}] + src[{2 * i, 2 * j + 1}] +
-                  src[{2 * i + 1, 2 * j}] + src[{2 * i + 1, 2 * j + 1}]);
-    }
-  }
-}
-
-template <int mg_levels_>
-real PoissonFVMGSolver<mg_levels_>::prolongate(Mesh &dest) const noexcept {
-  assert(dest.x_cells() == 2 * this->x_cells());
-  assert(dest.y_cells() == 2 * this->y_cells());
-  real max_diff = -std::numeric_limits<real>::infinity();
-  for (int i = 0; i < dest.x_cells(); i++) {
-    for (int j = 0; j < dest.y_cells(); j++) {
-      const real diff = this->cv_average(i / 2, j / 2);
-      max_diff = std::max(max_diff, diff);
-      dest[{i, j}] += diff;
-    }
-  }
-  return max_diff;
-}
-
-// The next versions are just the versions for mg_levels=1
 PoissonFVMGSolver<1>::PoissonFVMGSolver(
     const std::pair<double, double> &corner_1,
-    const std::pair<double, double> &corner_2, size_t x_cells, size_t y_cells,
-    BoundaryConditions &bc,
+    const std::pair<double, double> &corner_2, size_t cells_x, size_t cells_y,
+    const BoundaryConditions &bc,
     const std::function<double(double, double)> &source) noexcept
-    : Mesh(corner_1, corner_2, x_cells, y_cells), bc_(bc),
-      source_(corner_1, corner_2, x_cells, y_cells),
-      delta_(corner_1, corner_2, x_cells, y_cells) {
-  for (int i = -1; i < x_cells + 1; i++) {
-    for (int j = -1; j < y_cells + 1; j++) {
-      const real x = this->median_x(i);
-      const real y = this->median_y(j);
-      source_[{i, j}] = source(x, y);
-    }
-  }
-}
+    : PoissonFVMGSolverBase(corner_1, corner_2, cells_x, cells_y, bc, source) {}
 
-real PoissonFVMGSolver<1>::delta(const int i, const int j) const noexcept {
-  // Computes the difference between the Laplacian and the source term
-  return ((this->cv_average(i - 1, j) + this->cv_average(i + 1, j)) +
-          (this->cv_average(i, j - 1) + this->cv_average(i, j + 1))) /
-             4.0 +
-         source_[{i, j}] - this->cv_average(i, j);
-}
-
-void PoissonFVMGSolver<1>::residual() noexcept {
-  for (int i = 0; i < this->x_cells(); i++) {
-    for (int j = 0; j < this->y_cells(); j++) {
-      delta_[{i, j}] = delta(i, j);
-    }
-  }
-}
-
-real PoissonFVMGSolver<1>::poisson_pgs_or(const real or_term) noexcept {
-  real max_diff = -std::numeric_limits<real>::infinity();
-  for (int i = 0; i < this->x_cells(); i++) {
-    for (int j = 0; j < this->y_cells(); j++) {
-      const real diff = or_term * delta(i, j);
-      max_diff = std::max(max_diff, diff);
-      this->cv_average(i, j) += or_term * diff;
-    }
-  }
-  return max_diff;
-}
-
-void PoissonFVMGSolver<1>::restrict(const Mesh &src) noexcept {
-  // We're assuming cells
-  assert(src.x_cells() == 2 * this->x_cells());
-  assert(src.y_cells() == 2 * this->y_cells());
-  for (int i = 0; i < this->x_cells(); i++) {
-    for (int j = 0; j < this->y_cells(); j++) {
-      this->source_[{i, j}] =
-          0.25 * (src[{2 * i, 2 * j}] + src[{2 * i, 2 * j + 1}] +
-                  src[{2 * i + 1, 2 * j}] + src[{2 * i + 1, 2 * j + 1}]);
-    }
-  }
-}
-
-real PoissonFVMGSolver<1>::prolongate(Mesh &dest) const noexcept {
-  assert(dest.x_cells() == 2 * this->x_cells());
-  assert(dest.y_cells() == 2 * this->y_cells());
-  real max_diff = -std::numeric_limits<real>::infinity();
-  for (int i = 0; i < dest.x_cells(); i++) {
-    for (int j = 0; j < dest.y_cells(); j++) {
-      const real diff = this->cv_average(i / 2, j / 2);
-      max_diff = std::max(max_diff, diff);
-      dest[{i, j}] += diff;
-    }
-  }
-  return max_diff;
-}
-
+// Explicitly instantiate up multilevel implementations up to 10 levels
+// Note that 1 level is already instantiated because it's a specialization
 template class PoissonFVMGSolver<2>;
 template class PoissonFVMGSolver<3>;
 template class PoissonFVMGSolver<4>;

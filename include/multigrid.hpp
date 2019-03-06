@@ -16,15 +16,19 @@ public:
 
   // Cells are (externally) zero referenced from the bottom left corners
   // interior cell
-  constexpr real x1(int cell_x) const noexcept { return min_x_ + cell_x * dx_; }
+  constexpr real left_x(int cell_x) const noexcept {
+    return min_x_ + cell_x * dx_;
+  }
 
-  constexpr real x2(int cell_x) const noexcept {
+  constexpr real right_x(int cell_x) const noexcept {
     return min_x_ + (cell_x + 1) * dx_;
   }
 
-  constexpr real y1(int cell_y) const noexcept { return min_y_ + cell_y * dy_; }
+  constexpr real bottom_y(int cell_y) const noexcept {
+    return min_y_ + cell_y * dy_;
+  }
 
-  constexpr real y2(int cell_y) const noexcept {
+  constexpr real top_y(int cell_y) const noexcept {
     return min_y_ + (cell_y + 1) * dy_;
   }
 
@@ -46,11 +50,11 @@ public:
 
   Mesh(const std::pair<real, real> &corner_1,
        const std::pair<real, real> &corner_2, const size_t x_cells,
-       const size_t y_cells) noexcept;
+       const size_t cells_y) noexcept;
 
   Mesh(const std::pair<real, real> &corner_1,
        const std::pair<real, real> &corner_2, const size_t x_cells,
-       const size_t y_cells, std::function<real(real, real)> f) noexcept;
+       const size_t cells_y, std::function<real(real, real)> f) noexcept;
 
   real cv_average(int i, int j) const noexcept {
     return cva_(i + ghost_cells, j + ghost_cells);
@@ -71,8 +75,8 @@ public:
 
   const xt::xtensor<real, 2> data() const noexcept { return cva_; }
 
-  int x_cells() const noexcept { return cva_.shape()[0] - 2 * ghost_cells; }
-  int y_cells() const noexcept { return cva_.shape()[1] - 2 * ghost_cells; }
+  int cells_x() const noexcept { return cva_.shape()[0] - 2 * ghost_cells; }
+  int cells_y() const noexcept { return cva_.shape()[1] - 2 * ghost_cells; }
 
 protected:
   real min_x_, max_x_, min_y_, max_y_;
@@ -123,27 +127,58 @@ protected:
   std::function<real(real, real)> bottom_bc_;
 };
 
-template <int mg_levels_> class PoissonFVMGSolver : public Mesh {
+class PoissonFVMGSolverBase : public Mesh {
 public:
-  using Coarsen = PoissonFVMGSolver<mg_levels_ - 1>;
+  PoissonFVMGSolverBase(const std::pair<real, real> &corner_1,
+                        const std::pair<real, real> &corner_2,
+                        const size_t cells_x, const size_t cells_y,
+                        const BoundaryConditions &bc) noexcept;
 
-  PoissonFVMGSolver(const std::pair<real, real> &corner_1,
-                    const std::pair<real, real> &corner_2, const size_t x_cells,
-                    const size_t y_cells, BoundaryConditions &bc,
-                    const std::function<real(real, real)> &source) noexcept;
-
-  template <typename Iterable>
-  real solve(const Iterable &iterations, const real or_term = 1.5) noexcept {
-    auto [end, max_delta] =
-        solve_int(iterations.begin(), iterations.end(), or_term);
-    assert(end == iterations.end());
-    return max_delta;
-  }
+  PoissonFVMGSolverBase(const std::pair<real, real> &corner_1,
+                        const std::pair<real, real> &corner_2,
+                        const size_t cells_x, const size_t cells_y,
+                        const BoundaryConditions &bc,
+                        const std::function<real(real, real)> &source) noexcept;
 
   void restrict(const Mesh &src) noexcept;
   real prolongate(Mesh &dest) const noexcept;
 
   const Mesh &source() const noexcept { return source_; }
+  real poisson_pgs_or(const real or_term = 1.5) noexcept;
+
+protected:
+  real delta(const int i, const int j) const noexcept;
+  void residual() noexcept;
+
+  BoundaryConditions bc_;
+
+  Mesh source_;
+  Mesh delta_;
+};
+
+template <int mg_levels_>
+class PoissonFVMGSolver : public PoissonFVMGSolverBase {
+public:
+  PoissonFVMGSolver(const std::pair<real, real> &corner_1,
+                    const std::pair<real, real> &corner_2, const size_t cells_x,
+                    const size_t cells_y,
+                    const BoundaryConditions &bc) noexcept;
+
+  PoissonFVMGSolver(const std::pair<real, real> &corner_1,
+                    const std::pair<real, real> &corner_2, const size_t cells_x,
+                    const size_t cells_y, const BoundaryConditions &bc,
+                    const std::function<real(real, real)> &source) noexcept;
+
+  using Coarsen = PoissonFVMGSolver<mg_levels_ - 1>;
+
+  template <typename Iterable>
+  real solve(const Iterable &iterations,
+             const real or_term = 2.0 / 3.0) noexcept {
+    auto [end, max_delta] =
+        solve_int(iterations.begin(), iterations.end(), or_term);
+    assert(end == iterations.end());
+    return max_delta;
+  }
 
   template <int> friend class PoissonFVMGSolver;
 
@@ -154,47 +189,46 @@ protected:
                    std::pair<int, int>>::value,
       std::pair<Iter, real>>::type
   solve_int(Iter iterations, const Iter &end, const real or_term) noexcept {
-    auto [level, num_iter] = *iterations;
     real max_delta = 0.0;
-    if (level == mg_levels_) {
-      for (int i = 0; i < num_iter; i++) {
-        max_delta += poisson_pgs_or(or_term);
-      }
-      iterations++;
-      if (iterations == end) {
-        return {iterations, max_delta};
-      }
-      level = iterations->first;
-      if (level > mg_levels_) {
-        return {iterations, max_delta};
+    while (iterations != end && iterations->first <= mg_levels_) {
+      const int level = iterations->first;
+      if (level == mg_levels_) {
+        const int num_iter = iterations->second;
+        printf("Iterating at level %d, %d times\n", level, num_iter);
+        for (int i = 0; i < num_iter; i++) {
+          max_delta += poisson_pgs_or(or_term);
+        }
+        iterations++;
+      } else {
+        // level < mg_levels_; run pgs at a more coarse scale
+        residual();
+        multilev_.restrict(delta_);
+        auto [iter_processed, delta] =
+            multilev_.solve_int(iterations, end, or_term);
+        max_delta += multilev_.prolongate(*this);
+        iterations = iter_processed;
       }
     }
-    residual();
-    multilev_.restrict(delta_);
-    multilev_.solve_int(iterations, end, or_term);
     // This isn't strictly the maximum delta, but it does provide an
     // upper bound on it which goes to zero as the solution converges
-    max_delta += multilev_.prolongate(*this);
     return {iterations, max_delta};
   }
 
-  real delta(const int i, const int j) const noexcept;
-  void residual() noexcept;
-  real poisson_pgs_or(const real or_term = 1.5) noexcept;
-
   Coarsen multilev_;
-
-  BoundaryConditions bc_;
-
-  Mesh source_;
-  Mesh delta_;
 };
 
-template <> class PoissonFVMGSolver<1> : public Mesh {
+template <> class PoissonFVMGSolver<1> : public PoissonFVMGSolverBase {
 public:
+  static constexpr int mg_levels_ = 1;
+
   PoissonFVMGSolver(const std::pair<real, real> &corner_1,
-                    const std::pair<real, real> &corner_2, const size_t x_cells,
-                    const size_t y_cells, BoundaryConditions &bc,
+                    const std::pair<real, real> &corner_2, const size_t cells_x,
+                    const size_t cells_y,
+                    const BoundaryConditions &bc) noexcept;
+
+  PoissonFVMGSolver(const std::pair<real, real> &corner_1,
+                    const std::pair<real, real> &corner_2, const size_t cells_x,
+                    const size_t cells_y, const BoundaryConditions &bc,
                     const std::function<real(real, real)> &source) noexcept;
 
   // Each pair specifies the level the operation is to be performed on as the
@@ -208,11 +242,6 @@ public:
     return max_delta;
   }
 
-  void restrict(const Mesh &src) noexcept;
-  real prolongate(Mesh &dest) const noexcept;
-
-  const Mesh &source() const noexcept { return source_; }
-
   template <int> friend class PoissonFVMGSolver;
 
 protected:
@@ -222,33 +251,21 @@ protected:
                    std::pair<int, int>>::value,
       std::pair<Iter, real>>::type
   solve_int(Iter iterations, const Iter &end, const real or_term) noexcept {
-    auto [level, num_iter] = *iterations;
     real max_delta = 0.0;
-    assert(level == 1);
-    for (int i = 0; i < num_iter; i++) {
-      max_delta += poisson_pgs_or(or_term);
+    while (iterations != end && iterations->first <= 1) {
+      const int level = iterations->first;
+      assert(level == mg_levels_);
+      const int num_iter = iterations->second;
+      printf("Iterating at level %d, %d times\n", level, num_iter);
+      for (int i = 0; i < num_iter; i++) {
+        max_delta += poisson_pgs_or(or_term);
+      }
+      iterations++;
     }
-    iterations++;
-    if (iterations == end) {
-      return {iterations, max_delta};
-    }
-    level = iterations->first;
-    if (level > 1) {
-      return {iterations, max_delta};
-    }
-
-    // Error!
-    return {iterations, std::numeric_limits<real>::quiet_NaN()};
+    // This isn't strictly the maximum delta, but it does provide an
+    // upper bound on it which goes to zero as the solution converges
+    return {iterations, max_delta};
   }
-
-  real delta(const int i, const int j) const noexcept;
-  void residual() noexcept;
-  real poisson_pgs_or(const real or_term = 1.5) noexcept;
-
-  BoundaryConditions bc_;
-
-  Mesh source_;
-  Mesh delta_;
 };
 
 #endif
