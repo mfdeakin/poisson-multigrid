@@ -1,6 +1,6 @@
 
-#include <cmath>
 #include <gtest/gtest.h>
+#include <cmath>
 #include <random>
 
 #include "multigrid.hpp"
@@ -12,21 +12,21 @@ real test_residual(real x, real y) { return -2.0 * pi * pi * test_func(x, y); }
 
 TEST(poisson, residual) {
   constexpr int cells_x = 32, cells_y = 32;
-  BoundaryConditions bc; // Default homogeneous Dirichlet
+  BoundaryConditions bc;  // Default homogeneous Dirichlet
 
   // The solver for the homogeneous Poisson problem
   PoissonFVMGSolverBase test({0.0, 0.0}, {1.0, 1.0}, cells_x, cells_y, bc);
   // Initialize its solution guess with the test function
-  for (int i = 0; i < test.cells_x(); i++) {
+  for(int i = 0; i < test.cells_x(); i++) {
     const real x = test.median_x(i);
-    for (int j = 0; j < test.cells_y(); j++) {
+    for(int j = 0; j < test.cells_y(); j++) {
       const real y = test.median_y(j);
       test[{i, j}] = test_func(x, y);
     }
   }
-  for (int i = 1; i < test.cells_x() - 1; i++) {
+  for(int i = 1; i < test.cells_x() - 1; i++) {
     const real x = test.median_x(i);
-    for (int j = 1; j < test.cells_y() - 1; j++) {
+    for(int j = 1; j < test.cells_y() - 1; j++) {
       const real y = test.median_y(j);
       EXPECT_NEAR(test.delta(i, j), test_residual(x, y), 2e-2);
     }
@@ -35,16 +35,16 @@ TEST(poisson, residual) {
 
 TEST(multigrid, transfer) {
   constexpr int cells_x = 64, cells_y = 64;
-  BoundaryConditions bc; // Default homogeneous Dirichlet
+  BoundaryConditions bc;  // Default homogeneous Dirichlet
 
   // The solver for the homogeneous Poisson problem
   PoissonFVMGSolverBase src({0.0, 0.0}, {1.0, 1.0}, cells_x, cells_y, bc);
   // Initialize its solution guess and ghost cells with the test function
-  for (int i = -1; i <= src.cells_x(); i++) {
+  for(int i = -1; i <= src.cells_x(); i++) {
     const real x = src.median_x(i);
-    for (int j = -1; j <= src.cells_y(); j++) {
+    for(int j = -1; j <= src.cells_y(); j++) {
       const real y = src.median_y(j);
-      src[{i, j}] = test_func(x, y);
+      src[{i, j}]  = test_func(x, y);
     }
   }
   // src.delta(i, j) = \del test_func(x, y)
@@ -53,9 +53,9 @@ TEST(multigrid, transfer) {
                             bc);
   dest.restrict(src);
   const Mesh &restricted = dest.source();
-  for (int i = 0; i < restricted.cells_x(); i++) {
+  for(int i = 0; i < restricted.cells_x(); i++) {
     const real x = restricted.median_x(i);
-    for (int j = 0; j < restricted.cells_y(); j++) {
+    for(int j = 0; j < restricted.cells_y(); j++) {
       const real y = restricted.median_y(j);
       dest[{i, j}] = test_func(x, y);
       // Note that this error is the compounded error of the second derivative
@@ -67,9 +67,9 @@ TEST(multigrid, transfer) {
   }
   Mesh result({0.0, 0.0}, {1.0, 1.0}, cells_x, cells_y);
   dest.prolongate(result);
-  for (int i = 0; i < result.cells_x(); i++) {
+  for(int i = 0; i < result.cells_x(); i++) {
     const real x = src.median_x(i);
-    for (int j = 0; j < result.cells_y(); j++) {
+    for(int j = 0; j < result.cells_y(); j++) {
       const real y = src.median_y(j);
       EXPECT_NEAR((result[{i, j}]), test_func(x, y), 2e-2);
     }

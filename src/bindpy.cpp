@@ -14,7 +14,8 @@ namespace py = pybind11;
 
 // This just exports all the objects needed in Python
 
-template <int mg_levels> void define_solver(py::module module) {
+template <int mg_levels>
+void define_solver(py::module module) {
   std::stringstream ss;
   ss << "PoissonFVMG_" << mg_levels;
   using Solver = PoissonFVMGSolver<mg_levels>;
@@ -29,7 +30,7 @@ template <int mg_levels> void define_solver(py::module module) {
                    size_t, size_t, BoundaryConditions &>());
   using container = std::vector<std::tuple<int, int, real>>;
   poisson.def("solve", &Solver::template solve<container>);
-  if constexpr (mg_levels > 1) {
+  if constexpr(mg_levels > 1) {
     define_solver<mg_levels - 1>(module);
   }
 }
@@ -66,8 +67,8 @@ PYBIND11_MODULE(multigrid, module) {
              xt::xtensor<real, 2> grid(std::array<size_t, 2>{
                  static_cast<size_t>(m.cells_x() + 2 * m.ghost_cells),
                  static_cast<size_t>(m.cells_y() + 2 * m.ghost_cells)});
-             for (int i = 0; i < m.cells_x() + 2 * m.ghost_cells; i++) {
-               for (int j = 0; j < m.cells_y() + 2 * m.ghost_cells; j++) {
+             for(int i = 0; i < m.cells_x() + 2 * m.ghost_cells; i++) {
+               for(int j = 0; j < m.cells_y() + 2 * m.ghost_cells; j++) {
                  grid(i, j) = m.median_x(i - m.ghost_cells);
                }
              }
@@ -81,8 +82,8 @@ PYBIND11_MODULE(multigrid, module) {
         xt::xtensor<real, 2> grid(std::array<size_t, 2>{
             static_cast<size_t>(m.cells_x() + 2 * m.ghost_cells),
             static_cast<size_t>(m.cells_y() + 2 * m.ghost_cells)});
-        for (int i = 0; i < m.cells_x() + 2 * m.ghost_cells; i++) {
-          for (int j = 0; j < m.cells_y() + 2 * m.ghost_cells; j++) {
+        for(int i = 0; i < m.cells_x() + 2 * m.ghost_cells; i++) {
+          for(int j = 0; j < m.cells_y() + 2 * m.ghost_cells; j++) {
             grid(i, j) = m.median_y(j - m.ghost_cells);
           }
         }

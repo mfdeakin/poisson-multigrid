@@ -10,7 +10,7 @@
 using real = double;
 
 class Mesh {
-public:
+ public:
   // Assume a single ghost cell on each side of the boundary
   static constexpr int ghost_cells = 1;
 
@@ -48,13 +48,9 @@ public:
     return static_cast<int>(y / dy_ - min_y_ / dy_);
   }
 
-	constexpr real dx() const noexcept {
-		return dx_;
-	}
+  constexpr real dx() const noexcept { return dx_; }
 
-	constexpr real dy() const noexcept {
-		return dy_;
-	}
+  constexpr real dy() const noexcept { return dy_; }
 
   Mesh(const std::pair<real, real> &corner_1,
        const std::pair<real, real> &corner_2, const size_t x_cells,
@@ -86,7 +82,7 @@ public:
   int cells_x() const noexcept { return cva_.shape()[0] - 2 * ghost_cells; }
   int cells_y() const noexcept { return cva_.shape()[1] - 2 * ghost_cells; }
 
-protected:
+ protected:
   real min_x_, max_x_, min_y_, max_y_;
   real dx_, dy_;
 
@@ -94,15 +90,19 @@ protected:
 };
 
 class BoundaryConditions {
-public:
+ public:
   enum class BC_Type { dirichlet, neumann };
 
   static real homogeneous(real, real) { return 0.0; }
 
   BoundaryConditions()
-      : left_t_(BC_Type::dirichlet), right_t_(BC_Type::dirichlet),
-        top_t_(BC_Type::dirichlet), bottom_t_(BC_Type::dirichlet),
-        left_bc_(&homogeneous), right_bc_(&homogeneous), top_bc_(&homogeneous),
+      : left_t_(BC_Type::dirichlet),
+        right_t_(BC_Type::dirichlet),
+        top_t_(BC_Type::dirichlet),
+        bottom_t_(BC_Type::dirichlet),
+        left_bc_(&homogeneous),
+        right_bc_(&homogeneous),
+        top_bc_(&homogeneous),
         bottom_bc_(&homogeneous) {}
   BoundaryConditions(
       const BC_Type left_t, const std::function<real(real, real)> &left_bc,
@@ -127,7 +127,7 @@ public:
     return {bottom_t_, bottom_bc_};
   }
 
-protected:
+ protected:
   BC_Type left_t_, right_t_, top_t_, bottom_t_;
   std::function<real(real, real)> left_bc_;
   std::function<real(real, real)> right_bc_;
@@ -136,7 +136,7 @@ protected:
 };
 
 class PoissonFVMGSolverBase : public Mesh {
-public:
+ public:
   PoissonFVMGSolverBase(const std::pair<real, real> &corner_1,
                         const std::pair<real, real> &corner_2,
                         const size_t cells_x, const size_t cells_y,
@@ -155,7 +155,7 @@ public:
   real poisson_pgs_or(const real or_term = 1.5) noexcept;
   real delta(const int i, const int j) const noexcept;
 
-protected:
+ protected:
   BoundaryConditions bc_;
 
   Mesh source_;
@@ -163,7 +163,7 @@ protected:
 
 template <int mg_levels_>
 class PoissonFVMGSolver : public PoissonFVMGSolverBase {
-public:
+ public:
   PoissonFVMGSolver(const std::pair<real, real> &corner_1,
                     const std::pair<real, real> &corner_2, const size_t cells_x,
                     const size_t cells_y,
@@ -176,7 +176,8 @@ public:
 
   using Coarsen = PoissonFVMGSolver<mg_levels_ - 1>;
 
-  template <typename Iterable> real solve(const Iterable &iterations) noexcept {
+  template <typename Iterable>
+  real solve(const Iterable &iterations) noexcept {
     // Iterable must be a container of triples, specifying in order the level to
     // run pgs at, the number of iterations to run at that level, and the
     // over-relaxation parameter to use
@@ -185,9 +186,10 @@ public:
     return max_delta;
   }
 
-  template <int> friend class PoissonFVMGSolver;
+  template <int>
+  friend class PoissonFVMGSolver;
 
-protected:
+ protected:
   template <typename Iter>
   typename std::enable_if<
       std::is_same<typename std::iterator_traits<Iter>::value_type,
@@ -198,12 +200,12 @@ protected:
     // The tuple contains the level to smooth at, the number of smoothing
     // passes, and the over-relaxation parameter to smooth with
     real max_delta = 0.0;
-    while (iterations != end && std::get<0>(*iterations) <= mg_levels_) {
+    while(iterations != end && std::get<0>(*iterations) <= mg_levels_) {
       const int level = std::get<0>(*iterations);
-      if (level == mg_levels_) {
+      if(level == mg_levels_) {
         const int num_iter = std::get<1>(*iterations);
         const real or_term = std::get<2>(*iterations);
-        for (int i = 0; i < num_iter; i++) {
+        for(int i = 0; i < num_iter; i++) {
           max_delta += poisson_pgs_or(or_term);
         }
         iterations++;
@@ -223,8 +225,9 @@ protected:
   Coarsen multilev_;
 };
 
-template <> class PoissonFVMGSolver<1> : public PoissonFVMGSolverBase {
-public:
+template <>
+class PoissonFVMGSolver<1> : public PoissonFVMGSolverBase {
+ public:
   static constexpr int mg_levels_ = 1;
 
   PoissonFVMGSolver(const std::pair<real, real> &corner_1,
@@ -240,15 +243,17 @@ public:
   // Each pair specifies the level the operation is to be performed on as the
   // first parameter, and the number of pgs-or iterations to be performed on
   // that level as the second parameter
-  template <typename Iterable> real solve(const Iterable &iterations) noexcept {
+  template <typename Iterable>
+  real solve(const Iterable &iterations) noexcept {
     auto [end, max_delta] = solve_int(iterations.begin(), iterations.end());
     assert(end == iterations.end());
     return max_delta;
   }
 
-  template <int> friend class PoissonFVMGSolver;
+  template <int>
+  friend class PoissonFVMGSolver;
 
-protected:
+ protected:
   template <typename Iter>
   typename std::enable_if<
       std::is_same<typename std::iterator_traits<Iter>::value_type,
@@ -259,11 +264,11 @@ protected:
     // The tuple contains the level to smooth at, the number of smoothing
     // passes, and the over-relaxation parameter to smooth with
     real max_delta = 0.0;
-    while (iterations != end && std::get<0>(*iterations) <= 1) {
+    while(iterations != end && std::get<0>(*iterations) <= 1) {
       assert(std::get<0>(*iterations) == mg_levels_);
       const int num_iter = std::get<1>(*iterations);
       const real or_term = std::get<2>(*iterations);
-      for (int i = 0; i < num_iter; i++) {
+      for(int i = 0; i < num_iter; i++) {
         max_delta += poisson_pgs_or(or_term);
       }
       iterations++;
