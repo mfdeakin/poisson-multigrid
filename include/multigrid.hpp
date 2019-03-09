@@ -140,20 +140,17 @@ public:
                         const BoundaryConditions &bc,
                         const std::function<real(real, real)> &source) noexcept;
 
-  void restrict(const Mesh &src) noexcept;
+  void restrict(const PoissonFVMGSolverBase &src) noexcept;
   real prolongate(Mesh &dest) const noexcept;
 
   const Mesh &source() const noexcept { return source_; }
   real poisson_pgs_or(const real or_term = 1.5) noexcept;
+  real delta(const int i, const int j) const noexcept;
 
 protected:
-  real delta(const int i, const int j) const noexcept;
-  void residual() noexcept;
-
   BoundaryConditions bc_;
 
   Mesh source_;
-  Mesh delta_;
 };
 
 template <int mg_levels_>
@@ -171,11 +168,11 @@ public:
 
   using Coarsen = PoissonFVMGSolver<mg_levels_ - 1>;
 
-  template <typename Iterable>
-  real solve(const Iterable &iterations,
-             const real or_term = 2.0 / 3.0) noexcept {
-    auto [end, max_delta] =
-        solve_int(iterations.begin(), iterations.end(), or_term);
+  template <typename Iterable> real solve(const Iterable &iterations) noexcept {
+    // Iterable must be a container of triples, specifying in order the level to
+    // run pgs at, the number of iterations to run at that level, and the
+    // over-relaxation parameter to use
+    auto [end, max_delta] = solve_int(iterations.begin(), iterations.end());
     assert(end == iterations.end());
     return max_delta;
   }
@@ -186,24 +183,26 @@ protected:
   template <typename Iter>
   typename std::enable_if<
       std::is_same<typename std::iterator_traits<Iter>::value_type,
-                   std::pair<int, int>>::value,
+                   std::tuple<int, int, real>>::value,
       std::pair<Iter, real>>::type
-  solve_int(Iter iterations, const Iter &end, const real or_term) noexcept {
+  solve_int(Iter iterations, const Iter &end) noexcept {
+    // iterations is an iterator over a container of triples (tuples)
+    // The tuple contains the level to smooth at, the number of smoothing
+    // passes, and the over-relaxation parameter to smooth with
     real max_delta = 0.0;
-    while (iterations != end && iterations->first <= mg_levels_) {
-      const int level = iterations->first;
+    while (iterations != end && std::get<0>(*iterations) <= mg_levels_) {
+      const int level = std::get<0>(*iterations);
       if (level == mg_levels_) {
-        const int num_iter = iterations->second;
+        const int num_iter = std::get<1>(*iterations);
+        const real or_term = std::get<2>(*iterations);
         for (int i = 0; i < num_iter; i++) {
           max_delta += poisson_pgs_or(or_term);
         }
         iterations++;
       } else {
         // level < mg_levels_; run pgs at a more coarse scale
-        residual();
-        multilev_.restrict(delta_);
-        auto [iter_processed, delta] =
-            multilev_.solve_int(iterations, end, or_term);
+        multilev_.restrict(*this);
+        auto [iter_processed, delta] = multilev_.solve_int(iterations, end);
         max_delta += multilev_.prolongate(*this);
         iterations = iter_processed;
       }
@@ -233,10 +232,8 @@ public:
   // Each pair specifies the level the operation is to be performed on as the
   // first parameter, and the number of pgs-or iterations to be performed on
   // that level as the second parameter
-  template <typename Iterable>
-  real solve(const Iterable &iterations, const real or_term = 1.5) noexcept {
-    auto [end, max_delta] =
-        solve_int(iterations.begin(), iterations.end(), or_term);
+  template <typename Iterable> real solve(const Iterable &iterations) noexcept {
+    auto [end, max_delta] = solve_int(iterations.begin(), iterations.end());
     assert(end == iterations.end());
     return max_delta;
   }
@@ -247,13 +244,17 @@ protected:
   template <typename Iter>
   typename std::enable_if<
       std::is_same<typename std::iterator_traits<Iter>::value_type,
-                   std::pair<int, int>>::value,
+                   std::tuple<int, int, real>>::value,
       std::pair<Iter, real>>::type
-  solve_int(Iter iterations, const Iter &end, const real or_term) noexcept {
+  solve_int(Iter iterations, const Iter &end) noexcept {
+    // iterations is an iterator over a container of triples (tuples)
+    // The tuple contains the level to smooth at, the number of smoothing
+    // passes, and the over-relaxation parameter to smooth with
     real max_delta = 0.0;
-    while (iterations != end && iterations->first <= 1) {
-      assert(iterations->first == mg_levels_);
-      const int num_iter = iterations->second;
+    while (iterations != end && std::get<0>(*iterations) <= 1) {
+      assert(std::get<0>(*iterations) == mg_levels_);
+      const int num_iter = std::get<1>(*iterations);
+      const real or_term = std::get<2>(*iterations);
       for (int i = 0; i < num_iter; i++) {
         max_delta += poisson_pgs_or(or_term);
       }

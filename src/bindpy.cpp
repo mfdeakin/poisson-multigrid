@@ -27,7 +27,7 @@ template <int mg_levels> void define_solver(py::module module) {
       .def(
           py::init<const std::pair<real, real> &, const std::pair<real, real> &,
                    size_t, size_t, BoundaryConditions &>());
-  using container = std::vector<std::pair<int, int>>;
+  using container = std::vector<std::tuple<int, int, real>>;
   poisson.def("solve", &Solver::template solve<container>);
   if constexpr (mg_levels > 1) {
     define_solver<mg_levels - 1>(module);

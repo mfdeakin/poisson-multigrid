@@ -109,8 +109,7 @@ PoissonFVMGSolverBase::PoissonFVMGSolverBase(
     const std::pair<real, real> &corner_2, const size_t cells_x,
     const size_t cells_y, const BoundaryConditions &bc) noexcept
     : Mesh(corner_1, corner_2, cells_x, cells_y), bc_(bc),
-      source_(corner_1, corner_2, cells_x, cells_y),
-      delta_(corner_1, corner_2, cells_x, cells_y) {}
+      source_(corner_1, corner_2, cells_x, cells_y) {}
 
 PoissonFVMGSolverBase::PoissonFVMGSolverBase(
     const std::pair<real, real> &corner_1,
@@ -118,8 +117,7 @@ PoissonFVMGSolverBase::PoissonFVMGSolverBase(
     const size_t cells_y, const BoundaryConditions &bc,
     const std::function<real(real, real)> &source) noexcept
     : Mesh(corner_1, corner_2, cells_x, cells_y), bc_(bc),
-      source_(corner_1, corner_2, cells_x, cells_y, source),
-      delta_(corner_1, corner_2, cells_x, cells_y) {}
+      source_(corner_1, corner_2, cells_x, cells_y, source) {}
 
 real PoissonFVMGSolverBase::delta(const int i, const int j) const noexcept {
   // Computes the difference between the Laplacian and the source term
@@ -127,18 +125,15 @@ real PoissonFVMGSolverBase::delta(const int i, const int j) const noexcept {
   assert(i < cells_x());
   assert(j >= 0);
   assert(j < cells_y());
-  return ((cv_average(i - 1, j) + cv_average(i + 1, j)) +
-          (cv_average(i, j - 1) + cv_average(i, j + 1))) /
-             4.0 +
-         source_[{i, j}] - cv_average(i, j);
-}
-
-void PoissonFVMGSolverBase::residual() noexcept {
-  for (int i = 0; i < this->cells_x(); i++) {
-    for (int j = 0; j < this->cells_y(); j++) {
-      delta_[{i, j}] = delta(i, j);
-    }
-  }
+  // Our problem is the form of \del u = f
+  // The residual is then just r = \del u - f
+  return ((cv_average(i - 1, j) - 2.0 * cv_average(i, j) +
+           cv_average(i + 1, j)) /
+              (dx_ * dx_) +
+          (cv_average(i, j - 1) - 2.0 * cv_average(i, j) +
+           cv_average(i, j + 1)) /
+              (dy_ * dy_)) -
+         source_[{i, j}];
 }
 
 real PoissonFVMGSolverBase::poisson_pgs_or(const real or_term) noexcept {
@@ -154,17 +149,26 @@ real PoissonFVMGSolverBase::poisson_pgs_or(const real or_term) noexcept {
   return max_diff;
 }
 
-void PoissonFVMGSolverBase::restrict(const Mesh &src) noexcept {
+void PoissonFVMGSolverBase::restrict(
+    const PoissonFVMGSolverBase &src) noexcept {
   // We're assuming the cells are uniform
   assert(src.cells_x() == 2 * cells_x());
   assert(src.cells_y() == 2 * cells_y());
   for (int i = 0; i < cells_x(); i++) {
     for (int j = 0; j < cells_y(); j++) {
       source_[{i, j}] =
-          0.25 * (src[{2 * i, 2 * j}] + src[{2 * i, 2 * j + 1}] +
-                  src[{2 * i + 1, 2 * j}] + src[{2 * i + 1, 2 * j + 1}]);
-      // This is (not surprisingly...) a bad idea
-      // cv_average(i, j) = 0.0;
+          0.25 *
+          (src.delta(2 * i, 2 * j) + src.delta(2 * i, 2 * j + 1) +
+           src.delta(2 * i + 1, 2 * j) + src.delta(2 * i + 1, 2 * j + 1));
+      // It's not clear how to best precondition the coarser grids, so just
+      // assume it's of the form of the source term, as suggested by the
+      // periodic solutions to the Poisson problem
+      // This is slower than assuming our previous estimate to the error was
+      // reasonable, but it doesn't blow up from our previous solution being a
+      // bad initial guess.
+      // Another possibility is to set it to 0, it appears to work just as well
+      // cv_average(i, j) = source_[{i, j}];
+      cv_average(i, j) = 0.0;
     }
   }
 }
