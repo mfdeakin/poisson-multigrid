@@ -15,6 +15,7 @@ addons:
     packages:
     - g++-7
     - libgtest-dev
+    - xtensor-dev
 
 git:
   submodules: false
@@ -50,8 +51,11 @@ script:
 # /home/travis/miniconda/pkgs/pybind11-2.2.4-py37hfd86e86_0/share/cmake/pybind11/pybind11Config.cmake
 # /home/travis/miniconda/pkgs/pybind11-2.2.4-py37h2d50403_0/share/cmake/pybind11/pybind11Config.cmake
 # /home/travis/miniconda/envs/test-environment/share/cmake/pybind11/pybind11Config.cmake
-- pybind_dir=/home/travis/miniconda/pkgs/pybind11-2.2.4-py37hfd86e86_0/share/cmake/pybind11
-- cmake -D CMAKE_BUILD_TYPE=Debug -D CMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -D pybind11_DIR=${pybind_dir}
+#- pybind_dir=/home/travis/miniconda/pkgs/pybind11-2.2.4-py37hfd86e86_0/share/cmake/pybind11
+- pybind_dir=$(find /home/travis/miniconda/pkgs -iname pybind11*.cmake | xargs dirname | uniq)
+- git submodule init
+- git submodule update --recursive
+- cmake -D CMAKE_BUILD_TYPE=Debug -D CMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -D pybind11_DIR=${pybind_dir} .
 - make VERBOSE=1 -j 4
 - ctest -VV
 
