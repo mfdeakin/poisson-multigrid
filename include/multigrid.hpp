@@ -45,8 +45,16 @@ public:
   }
 
   constexpr int y_idx(real y) const noexcept {
-    return static_cast<int>(y / dy_ - min_y_ / dx_);
+    return static_cast<int>(y / dy_ - min_y_ / dy_);
   }
+
+	constexpr real dx() const noexcept {
+		return dx_;
+	}
+
+	constexpr real dy() const noexcept {
+		return dy_;
+	}
 
   Mesh(const std::pair<real, real> &corner_1,
        const std::pair<real, real> &corner_2, const size_t x_cells,
