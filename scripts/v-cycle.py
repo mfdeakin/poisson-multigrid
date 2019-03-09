@@ -1,11 +1,12 @@
 from multigrid import Mesh, BoundaryConditions
 from multigrid import (PoissonFVMG_1, PoissonFVMG_2, PoissonFVMG_3, PoissonFVMG_4, PoissonFVMG_5,
                        PoissonFVMG_6, PoissonFVMG_7, PoissonFVMG_8, PoissonFVMG_9, PoissonFVMG_10)
-from numpy import sin, pi, nan, sum, sqrt
+from numpy import sin, pi, nan, sum, sqrt, array
 
-from matplotlib.pyplot import figure, contour, show, clabel, title, pcolor, colorbar
+from matplotlib.pyplot import figure, contour, show, clabel, title, pcolor, colorbar, semilogy, legend
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
+import time
 
 def f(x, y):
     return sin(pi * x) * sin(pi * y)
@@ -27,60 +28,103 @@ def plot_3d(x, y, a, name):
 def plot_mesh(m, name):
     plot_3d(m.grid_x(), m.grid_y(), m.array(), name)
 
-# Plot for part 1
-
-# orig = Mesh((0.0, 0.0), (1.0, 1.0), 64, 64, f)
-# plot_mesh(orig, "Fine sin(pi * x) * sin(pi * y)")
-
-# restriction = PoissonFVMG_1((0.0, 0.0), (1.0, 1.0), 32, 32, bc)
-# restriction.restrict(orig)
-# plot_mesh(restriction.source(), "Restricted sin(pi * x) * sin(pi * y)")
-# for i in range(restriction.cells_x()):
-#     for j in range(restriction.cells_y()):
-#         restriction[(i, j)] = restriction.source()[(i, j)]
-
-# # Restriction only occurs on the internal cells,
-# # the ghost cells need to be excluded when examining the error
-# err_restricted = (restriction.source().array()
-#                   - f(restriction.grid_x(), restriction.grid_y()))[1:-1, 1:-1]
-# plot_3d(restriction.grid_x()[1:-1, 1:-1], restriction.grid_y()[1:-1, 1:-1],
-#         err_restricted, "Restriction Error")
-
-# prolongated = Mesh((0.0, 0.0), (1.0, 1.0), 64, 64)
-# restriction.prolongate(prolongated)
-# err_prolongated = (prolongated.array() - orig.array())[1:-1, 1:-1]
-# plot_3d(prolongated.grid_x()[1:-1, 1:-1], prolongated.grid_y()[1:-1, 1:-1],
-#         err_prolongated, "Prolongated Error")
-# figure()
-# pcolor(err_prolongated)
-
-# plot_mesh(prolongated, "Prolongated sin(pi * x) * sin(pi * y)")
-
-# Part 2
-
 bc = BoundaryConditions()
 
-solver = PoissonFVMG_2((0.0, 0.0), (1.0,  1.0), 64, 64, bc)
-for i in range(solver.cells_x()):
-    x = solver.median_x(i)
-    for j in range(solver.cells_y()):
-        y = solver.median_y(j)
-        solver[(i, j)] = f(x, y)
+# The 5 specifies the number of levels available to the multigrid
+solver = PoissonFVMG_5((0.0, 0.0), (1.0,  1.0), 64, 64, bc)
 
-# Apply pgs-or at the finest level 10 times
-l2 = sqrt(sum(solver.array() ** 2))
-i = 0
-while i < 150:
-    print("Computing {}".format(i + 1))
-    solver.solve([(2, 1), (1, 20), (2, 1)], 1.0 / 3.0)
+opt_2_pass_or = (12.0 + array([sqrt(8), -sqrt(8)])) / 17.0
+
+# mg_cycles is a list of parameters to use for each type of cycle to implement
+# mg_passes is the important one,, it is a list of triples for the multigrid parameters
+# The first item in the triple is the granularity to run at (higher being a finer granularity),
+# ranging from 1 to the number of levels in the multigrid solver.
+# The second item is the number of smoothing passes to run at that level
+# The third item is the over relaxation term to use
+mg_cycles = [
+    # {"mg_passes": [(5, 2, 1.8)],
+    #  "name": "1 Level 1 Pass",
+    #  "l2_norms": []},
+    # {"mg_passes": [(5, 1, 2.0 / 3.0),
+    #                (4, 20, 1.0),
+    #                (5, 1, 2.0 / 3.0)],
+    #  "name": "2 Level 1 Pass Test",
+    #  "l2_norms": []},
+    {"mg_passes": [(5, 1, 2.0 / 3.0),
+                   # The finer pass mostly only damped the high-frequencies,
+                   # which are inaccessible at the coarser scales.
+                   # So the coarser scale should damp all frequencies available to it,
+                   # so use something close to the optimal over-relaxation parameter
+                   (4, 2, 1.8),
+                   (5, 1, 2.0 / 3.0)],
+     "name": "2 Level 1 Pass",
+     "l2_norms": []},
+    {"mg_passes": [(5, 1, 2.0 / 3.0),
+                   (4, 1, 1.0),
+                   (3, 2, 1.8),
+                   (4, 1, 2.0),
+                   (5, 1, 2.0 / 3.0)],
+     "name": "3 Level 1 Pass",
+     "l2_norms": []},
+    {"mg_passes": [(5, 1, 2.0 / 3.0),
+                   # Apparently the over-relaxation parameters for coarser grids need
+                   # to be chosen carefully, or else the solution can blow up
+                   # Though from our analysis of the amplification factor,
+                   # it seems like these should be 2/3
+                   (4, 1, 1.0),
+                   (3, 1, 1.0),
+                   (2, 2, 1.8),
+                   (3, 1, 1.0),
+                   (4, 1, 1.0),
+                   (5, 1, 2.0 / 3.0)],
+     "name": "4 Level 1 Pass",
+     "l2_norms": []},
+    {"mg_passes": [(5, 1, 2.0 / 3.0),
+                   # Apparently the over-relaxation parameters for coarser grids need
+                   # to be chosen carefully, or else the solution can blow up
+                   # Though from our analysis of the amplification factor,
+                   # it seems like these should be 2/3
+                   (4, 1, 1.0),
+                   (3, 1, 1.0),
+                   (2, 1, 1.0),
+                   (1, 2, 1.8),
+                   (2, 1, 1.0),
+                   (3, 1, 1.0),
+                   (4, 1, 1.0),
+                   (5, 1, 2.0 / 3.0)],
+     "name": "5 Level 1 Pass",
+     "l2_norms": []},
+]
+
+for cycle in mg_cycles:
+    for i in range(solver.cells_x()):
+        x = solver.median_x(i)
+        for j in range(solver.cells_y()):
+            y = solver.median_y(j)
+            solver[(i, j)] = f(x, y)
+
+    start_time = time.clock()
+
     l2 = sqrt(sum(solver.array() ** 2))
-    i += 1
-    if i % 50 == 0:
-        print("Plotting {}".format(i))
-        plot_mesh(solver, "Result {}".format(i))
-        figure()
-        pcolor(solver.array())
-        colorbar()
-        title("Result {}".format(i))
+    i = 0
+    cycle["l2_norms"].append(l2)
+    while l2 > 1e-9:
+        solver.solve(cycle["mg_passes"])
+        l2 = sqrt(sum(solver.array() ** 2))
+        cycle["l2_norms"].append(l2)
+        i += 1
+        if l2 > 100.0:
+            print("Abort, l2 blowing up")
+            break
 
+    end_time = time.clock()
+    print("{} final iteration {}; completed in {: .6} s".format(cycle["name"], i,
+                                                                end_time - start_time))
+
+fig = figure()
+
+for cycle in mg_cycles:
+    semilogy(cycle["l2_norms"], label=cycle["name"])
+
+legend()
 show()

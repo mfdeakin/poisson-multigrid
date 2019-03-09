@@ -24,4 +24,6 @@ add_executable(multigrid_tester ./src/test.cpp)
 target_link_libraries(multigrid_tester multigrid_poisson gtest)
 add_test(multigrid_test multigrid_tester)
 
+configure_file(./scripts/part1plots.py part1plots.py COPYONLY)
+configure_file(./scripts/poisson.py poisson.py COPYONLY)
 configure_file(./scripts/v-cycle.py v-cycle.py COPYONLY)
