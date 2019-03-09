@@ -139,9 +139,11 @@ real PoissonFVMGSolverBase::delta(const int i, const int j) const noexcept {
 real PoissonFVMGSolverBase::poisson_pgs_or(const real or_term) noexcept {
   real max_diff = -std::numeric_limits<real>::infinity();
   bc_.apply(*this);
+  const real diff_scale =
+      (dx_ * dx_ * dy_ * dy_ / (2.0 * (dx_ * dx_ + dy_ * dy_)));
   for (int i = 0; i < cells_x(); i++) {
     for (int j = 0; j < cells_y(); j++) {
-      const real diff = or_term * delta(i, j);
+      const real diff = or_term * diff_scale * delta(i, j);
       max_diff = std::max(max_diff, diff);
       cv_average(i, j) += diff;
     }
@@ -161,13 +163,7 @@ void PoissonFVMGSolverBase::restrict(
           (src.delta(2 * i, 2 * j) + src.delta(2 * i, 2 * j + 1) +
            src.delta(2 * i + 1, 2 * j) + src.delta(2 * i + 1, 2 * j + 1));
       // It's not clear how to best precondition the coarser grids, so just
-      // assume it's of the form of the source term, as suggested by the
-      // periodic solutions to the Poisson problem
-      // This is slower than assuming our previous estimate to the error was
-      // reasonable, but it doesn't blow up from our previous solution being a
-      // bad initial guess.
-      // Another possibility is to set it to 0, it appears to work just as well
-      // cv_average(i, j) = source_[{i, j}];
+      // set it to 0, it appears to work reasonably well
       cv_average(i, j) = 0.0;
     }
   }
@@ -185,7 +181,7 @@ real PoissonFVMGSolverBase::prolongate(Mesh &dest) const noexcept {
       // const real diff = cv_average(i / 2, j / 2);
       const real diff = interpolate(x, y);
       max_diff = std::max(max_diff, diff);
-      dest[{i, j}] += diff;
+      dest[{i, j}] -= diff;
     }
   }
   return max_diff;
