@@ -35,19 +35,21 @@ def f_dy(x, y):
 def f_lapl(x, y):
     return -2.0 * pi * pi * f(x, y)
 
-bc = BoundaryConditions(BoundaryConditions.dirichlet, f, # Left BC
-                        BoundaryConditions.dirichlet, f, # Right BC
+# Note that when applying neumann boundary conditions, we need the normal derivative,
+# not the derivative wrt x and y - hence the negative signs for the left and bottom bc
+bc = BoundaryConditions(BoundaryConditions.neumann, lambda x, y: -f_dx(x, y), # Left BC
+                        BoundaryConditions.neumann, f_dx, # Right BC
                         BoundaryConditions.neumann, f_dy, # Top BC
-                        BoundaryConditions.neumann, f_dy # Bottom BC
+                        BoundaryConditions.neumann, lambda x, y: -f_dy(x, y)  # Bottom BC
 )
 
-solver = PoissonFVMG_1((0.0, 0.0), (5.0,  1.0), 256, 64, bc, f_lapl)
+solver = PoissonFVMG_1((0.0, 0.5), (5.0,  1.5), 256, 64, bc, f_lapl)
 
 sol = int_slice(f(solver.grid_x(), solver.grid_y()))
 l2 = sqrt(sum((sol - int_slice(solver.array())) ** 2))
 
 i = 0
-while l2 > 1e-9 and i < 1000:
+while l2 > 1e-9 and i < 400:
     solver.solve([(1, 1, 1.5)])
     l2 = sqrt(sum((sol - int_slice(solver.array())) ** 2))
     i += 1
@@ -58,13 +60,13 @@ err = int_slice(solver.array()) - sol
 plot_3d(int_slice(solver.grid_x()), int_slice(solver.grid_y()),
         err, "Error")
 
-solver = PoissonFVMG_3((0.0, 0.0), (5.0,  1.0), 256, 64, bc, f_lapl)
+solver = PoissonFVMG_3((0.0, 0.5), (5.0,  1.5), 256, 64, bc, f_lapl)
 i = 0
-while l2 > 1e-9 and i < 100:
+while l2 > 1e-9 and i < 400:
     solver.solve([(3, 1, 2.0 / 3.0),
-                  (2, 2, 1.0),
-                  (1, 16, 1.8),
-                  (2, 2, 1.0),
+                  (2, 2, 2.0 / 3.0),
+                  (1, 16, 1.5),
+                  (2, 2, 2.0 / 3.0),
                   (3, 1, 2.0 / 3.0),])
     l2 = sqrt(sum((sol - int_slice(solver.array())) ** 2))
     i += 1
