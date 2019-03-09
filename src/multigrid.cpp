@@ -70,18 +70,22 @@ void BoundaryConditions::apply(Mesh &mesh) const noexcept {
   for (int i = 0; i < mesh.cells_x(); i++) {
     const real x = mesh.median_x(i);
     real bndry_val = mesh[{i, 0}];
+    real weight = mesh.dy();
     if (top_t_ == BC_Type::dirichlet) {
       bndry_val = -bndry_val;
+      weight = 2.0;
     }
-    mesh[{i, -1}] = 2.0 * bottom_bc_(x, y_bottom) + bndry_val;
+    mesh[{i, -1}] = weight * bottom_bc_(x, y_bottom) + bndry_val;
   }
   for (int i = 0; i < mesh.cells_x(); i++) {
     const real x = mesh.median_x(i);
     real bndry_val = mesh[{i, mesh.cells_y() - 1}];
+    real weight = mesh.dy();
     if (top_t_ == BC_Type::dirichlet) {
       bndry_val = -bndry_val;
+      weight = 2.0;
     }
-    mesh[{i, mesh.cells_y()}] = 2.0 * top_bc_(x, y_top) + bndry_val;
+    mesh[{i, mesh.cells_y()}] = weight * top_bc_(x, y_top) + bndry_val;
   }
 
   const real x_left = mesh.left_x(0);
@@ -89,16 +93,22 @@ void BoundaryConditions::apply(Mesh &mesh) const noexcept {
   for (int j = 0; j < mesh.cells_y(); j++) {
     const real y = mesh.median_y(j);
     real bndry_val = mesh[{0, j}];
+    real weight = mesh.dx();
     if (left_t_ == BC_Type::dirichlet) {
       bndry_val = -bndry_val;
+      weight = 2.0;
     }
-    mesh[{-1, j}] = 2.0 * left_bc_(x_left, y) + bndry_val;
-
-    bndry_val = mesh[{mesh.cells_x() - 1, j}];
+    mesh[{-1, j}] = weight * left_bc_(x_left, y) + bndry_val;
+  }
+  for (int j = 0; j < mesh.cells_y(); j++) {
+    const real y = mesh.median_y(j);
+    real bndry_val = mesh[{mesh.cells_x() - 1, j}];
+    real weight = mesh.dx();
     if (right_t_ == BC_Type::dirichlet) {
       bndry_val = -bndry_val;
+      weight = 2.0;
     }
-    mesh[{mesh.cells_x(), j}] = 2.0 * right_bc_(x_right, y) + bndry_val;
+    mesh[{mesh.cells_x(), j}] = weight * right_bc_(x_right, y) + bndry_val;
   }
 }
 
