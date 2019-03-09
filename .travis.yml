@@ -1,0 +1,63 @@
+language: cpp
+sudo: false
+dist: xenial
+
+os:
+- linux
+
+python:
+- "3.6"
+
+addons:
+  apt:
+    sources:
+    - ubuntu-toolchain-r-test
+    packages:
+    - g++-7
+    - libgtest-dev
+
+git:
+  submodules: false
+branches:
+  only:
+  - master
+
+install:
+# Make certain we use g++-7
+- if [[ "${TRAVIS_OS_NAME}" == "linux" ]]; then ln -s $(which g++-7) g++; export PATH="${PWD}:${PATH}"; fi
+# Build googletest
+- cd /usr/src/gtest
+- sudo $(which cmake) .
+- sudo make
+- sudo mv libg* /usr/lib
+- cd ${TRAVIS_BUILD_DIR}
+# We need conda - follow the instructions here: https://conda.io/docs/user-guide/tasks/use-conda-with-travis-ci.html
+- wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
+- bash miniconda.sh -b -p ${HOME}/miniconda
+- export PATH="${HOME}/miniconda/bin:${PATH}"
+- hash -r
+- conda config --set always_yes yes --set changeps1 no
+- conda update -q conda
+# Useful for debugging any issues with conda
+- conda info -a
+# Replace dep1 dep2 ... with your dependencies
+- conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION pybind11
+- source activate test-environment
+- conda install pybind11 -c conda-forge
+
+script:
+# Potential directories:
+# /home/travis/miniconda/pkgs/pybind11-2.2.4-py37hfd86e86_0/share/cmake/pybind11/pybind11Config.cmake
+# /home/travis/miniconda/pkgs/pybind11-2.2.4-py37h2d50403_0/share/cmake/pybind11/pybind11Config.cmake
+# /home/travis/miniconda/envs/test-environment/share/cmake/pybind11/pybind11Config.cmake
+- pybind_dir=/home/travis/miniconda/pkgs/pybind11-2.2.4-py37hfd86e86_0/share/cmake/pybind11
+- cmake -D CMAKE_BUILD_TYPE=Debug -D CMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -D pybind11_DIR=${pybind_dir}
+- make VERBOSE=1 -j 4
+- ctest -VV
+
+after_script:
+- cd ${TRAVIS_BUILD_DIR}
+- lcov --directory . --capture --output-file coverage.info
+- lcov --remove coverage.info '/usr/*' --output-file coverage.info
+- lcov --list coverage.info
+- bash <(curl -s https://codecov.io/bash) || echo "Codecov did not collect coverage reports"
