@@ -21,7 +21,7 @@ set_target_properties(multigrid PROPERTIES
 		      CXX_EXTENSIONS OFF)
 
 add_executable(multigrid_tester ./src/test.cpp)
-target_link_libraries(multigrid_tester multigrid_poisson gtest)
+target_link_libraries(multigrid_tester multigrid_poisson gtest pthread)
 add_test(multigrid_test multigrid_tester)
 
 configure_file(./scripts/part1plots.py part1plots.py COPYONLY)
