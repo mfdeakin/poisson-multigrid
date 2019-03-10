@@ -15,7 +15,6 @@ addons:
     packages:
     - g++-7
     - libgtest-dev
-    - xtensor-dev
 
 git:
   submodules: false

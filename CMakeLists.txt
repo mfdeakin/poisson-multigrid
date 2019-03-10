@@ -4,7 +4,7 @@ project(multigrid)
 
 enable_testing()
 
-include_directories(./include ./xtensor/include)
+include_directories(./include ./xtensor/include ./xtl/include)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 
