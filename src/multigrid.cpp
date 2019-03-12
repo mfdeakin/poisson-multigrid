@@ -16,6 +16,10 @@ Mesh::Mesh(const std::pair<real, real> &corner_1,
       dy_((max_y_ - min_y_) / cells_y),
       cva_(std::array<size_t, 2>{cells_x + 2 * ghost_cells,
                                  cells_y + 2 * ghost_cells}) {
+  assert(!std::isnan(min_x_) && !std::isnan(max_x_));
+  assert(!std::isnan(min_y_) && !std::isnan(max_y_));
+  assert(min_x_ != max_x_);
+  assert(min_y_ != max_y_);
   for(size_t i = 0; i < cva_.shape()[0]; i++) {
     for(size_t j = 0; j < cva_.shape()[1]; j++) {
       cva_(i, j) = 0.0;
@@ -27,9 +31,9 @@ Mesh::Mesh(const std::pair<real, real> &corner_1,
            const std::pair<real, real> &corner_2, const size_t cells_x,
            const size_t cells_y, std::function<real(real, real)> f) noexcept
     : Mesh(corner_1, corner_2, cells_x, cells_y) {
-  for(int i = 0; i < cva_.shape()[0]; i++) {
-    for(int j = 0; j < cva_.shape()[1]; j++) {
-      cva_(i, j) = f(median_x(i - ghost_cells), median_y(j - ghost_cells));
+  for(int i = -1; i <= this->cells_x(); i++) {
+    for(int j = -1; j <= this->cells_y(); j++) {
+      cv_average(i, j) = f(median_x(i), median_y(j));
     }
   }
 }
@@ -74,51 +78,68 @@ void BoundaryConditions::apply(Mesh &mesh) const noexcept {
   // TODO: Reduce code duplication here...
   // Each loop is over a different boundary, they set the ghost cells based on
   // the type of boundary conidtion and the current system
-  const real y_top    = mesh.top_y(mesh.cells_y() - 1);
-  const real y_bottom = mesh.bottom_y(0);
+  auto apply_dirichlet = [](real &ghost_cell, const real bndry_cell,
+                            const real bc_value) {
+    ghost_cell = 2.0 * bc_value - bndry_cell;
+  };
+  auto apply_neumann = [](real &ghost_cell, const real bndry_cell,
+                          const real bc_value, const real h) {
+    ghost_cell = h * bc_value + bndry_cell;
+  };
   for(int i = 0; i < mesh.cells_x(); i++) {
-    const real x   = mesh.median_x(i);
-    real bndry_val = mesh[{i, 0}];
-    real weight    = mesh.dy();
-    if(top_t_ == BC_Type::dirichlet) {
-      bndry_val = -bndry_val;
-      weight    = 2.0;
+    const real y_bottom  = mesh.bottom_y(0);
+    const real x         = mesh.median_x(i);
+    const real bndry_val = mesh[{i, 0}];
+    real &ghost_cell     = mesh[{i, -1}];
+    if(bottom_t_ == BC_Type::dirichlet) {
+      apply_dirichlet(ghost_cell, bndry_val, bottom_bc_(x, y_bottom));
+    } else {
+      apply_neumann(ghost_cell, bndry_val, bottom_bc_(x, y_bottom), mesh.dy());
     }
-    mesh[{i, -1}] = weight * bottom_bc_(x, y_bottom) + bndry_val;
   }
   for(int i = 0; i < mesh.cells_x(); i++) {
-    const real x   = mesh.median_x(i);
-    real bndry_val = mesh[{i, mesh.cells_y() - 1}];
-    real weight    = mesh.dy();
+    const real y_top     = mesh.top_y(mesh.cells_y() - 1);
+    const real x         = mesh.median_x(i);
+    const real bndry_val = mesh[{i, mesh.cells_y() - 1}];
+    real &ghost_cell     = mesh[{i, mesh.cells_y()}];
     if(top_t_ == BC_Type::dirichlet) {
-      bndry_val = -bndry_val;
-      weight    = 2.0;
+      apply_dirichlet(ghost_cell, bndry_val, top_bc_(x, y_top));
+    } else {
+      apply_neumann(ghost_cell, bndry_val, top_bc_(x, y_top), mesh.dy());
     }
-    mesh[{i, mesh.cells_y()}] = weight * top_bc_(x, y_top) + bndry_val;
   }
 
-  const real x_left  = mesh.left_x(0);
-  const real x_right = mesh.right_x(mesh.cells_x() - 1);
   for(int j = 0; j < mesh.cells_y(); j++) {
-    const real y   = mesh.median_y(j);
-    real bndry_val = mesh[{0, j}];
-    real weight    = mesh.dx();
+    const real x_left    = mesh.left_x(0);
+    const real y         = mesh.median_y(j);
+    const real bndry_val = mesh[{0, j}];
+    real &ghost_cell     = mesh[{-1, j}];
     if(left_t_ == BC_Type::dirichlet) {
-      bndry_val = -bndry_val;
-      weight    = 2.0;
+      apply_dirichlet(ghost_cell, bndry_val, left_bc_(x_left, y));
+    } else {
+      apply_neumann(ghost_cell, bndry_val, left_bc_(x_left, y), mesh.dx());
     }
-    mesh[{-1, j}] = weight * left_bc_(x_left, y) + bndry_val;
   }
   for(int j = 0; j < mesh.cells_y(); j++) {
-    const real y   = mesh.median_y(j);
-    real bndry_val = mesh[{mesh.cells_x() - 1, j}];
-    real weight    = mesh.dx();
+    const real x_right   = mesh.right_x(mesh.cells_x() - 1);
+    const real y         = mesh.median_y(j);
+    const real bndry_val = mesh[{mesh.cells_x() - 1, j}];
+    real &ghost_cell     = mesh[{mesh.cells_x(), j}];
     if(right_t_ == BC_Type::dirichlet) {
-      bndry_val = -bndry_val;
-      weight    = 2.0;
+      apply_dirichlet(ghost_cell, bndry_val, right_bc_(x_right, y));
+    } else {
+      apply_neumann(ghost_cell, bndry_val, right_bc_(x_right, y), mesh.dx());
     }
-    mesh[{mesh.cells_x(), j}] = weight * right_bc_(x_right, y) + bndry_val;
   }
+  // Prolongating with bilinear interpolation requires the corner ghost cell to
+  // be a reasonable approximation of its actual value
+  // - set it to the value of the internal corner cell.
+  // Better might be using the inner corner cell gradient to estimate it
+  mesh[{-1, -1}]             = mesh[{0, 0}];
+  mesh[{-1, mesh.cells_y()}] = mesh[{0, mesh.cells_y() - 1}];
+  mesh[{mesh.cells_x(), -1}] = mesh[{mesh.cells_x() - 1, 0}];
+  mesh[{mesh.cells_x(), mesh.cells_y()}] =
+      mesh[{mesh.cells_x() - 1, mesh.cells_y() - 1}];
 }
 
 // Use this to enable initializing the homogeneous system easy
@@ -130,7 +151,21 @@ PoissonFVMGSolverBase::PoissonFVMGSolverBase(
     const size_t cells_y, const BoundaryConditions &bc) noexcept
     : Mesh(corner_1, corner_2, cells_x, cells_y),
       bc_(bc),
-      source_(corner_1, corner_2, cells_x, cells_y) {}
+      source_(corner_1, corner_2, cells_x, cells_y) {
+  // Make certain we never use the boundaries of the source term
+  for(int i = -1; i <= static_cast<int>(cells_x); i++) {
+    source_[{i, -1}] = std::numeric_limits<real>::signaling_NaN();
+  }
+  for(int i = -1; i <= static_cast<int>(cells_x); i++) {
+    source_[{i, cells_y}] = std::numeric_limits<real>::signaling_NaN();
+  }
+  for(int j = -1; j <= static_cast<int>(cells_y); j++) {
+    source_[{-1, j}] = std::numeric_limits<real>::signaling_NaN();
+  }
+  for(int j = -1; j <= static_cast<int>(cells_y); j++) {
+    source_[{cells_x, j}] = std::numeric_limits<real>::signaling_NaN();
+  }
+}
 
 PoissonFVMGSolverBase::PoissonFVMGSolverBase(
     const std::pair<real, real> &corner_1,
@@ -139,7 +174,21 @@ PoissonFVMGSolverBase::PoissonFVMGSolverBase(
     const std::function<real(real, real)> &source) noexcept
     : Mesh(corner_1, corner_2, cells_x, cells_y),
       bc_(bc),
-      source_(corner_1, corner_2, cells_x, cells_y, source) {}
+      source_(corner_1, corner_2, cells_x, cells_y, source) {
+  // Make certain we never use the boundaries of the source term
+  for(int i = -1; i <= static_cast<int>(cells_x); i++) {
+    source_[{i, -1}] = std::numeric_limits<real>::signaling_NaN();
+  }
+  for(int i = -1; i <= static_cast<int>(cells_x); i++) {
+    source_[{i, cells_y}] = std::numeric_limits<real>::signaling_NaN();
+  }
+  for(int j = -1; j <= static_cast<int>(cells_y); j++) {
+    source_[{-1, j}] = std::numeric_limits<real>::signaling_NaN();
+  }
+  for(int j = -1; j <= static_cast<int>(cells_y); j++) {
+    source_[{cells_x, j}] = std::numeric_limits<real>::signaling_NaN();
+  }
+}
 
 real PoissonFVMGSolverBase::delta(const int i, const int j) const noexcept {
   // Computes the difference between the Laplacian and the source term
@@ -159,14 +208,15 @@ real PoissonFVMGSolverBase::delta(const int i, const int j) const noexcept {
 }
 
 real PoissonFVMGSolverBase::poisson_pgs_or(const real or_term) noexcept {
-  real max_diff = -std::numeric_limits<real>::infinity();
+  real max_diff       = -std::numeric_limits<real>::infinity();
   bc_.apply(*this);
   const real diff_scale =
       (dx_ * dx_ * dy_ * dy_ / (2.0 * (dx_ * dx_ + dy_ * dy_)));
   for(int i = 0; i < cells_x(); i++) {
     for(int j = 0; j < cells_y(); j++) {
-      const real diff = or_term * diff_scale * delta(i, j);
-      max_diff        = std::max(max_diff, diff);
+      const real inv_scale = 1.0 / (2.0 * (dx_ * dx_ + dy_ * dy_));
+      const real diff      = or_term * diff_scale * delta(i, j);
+      max_diff             = std::max(max_diff, diff);
       cv_average(i, j) += diff;
     }
   }
@@ -178,10 +228,13 @@ void PoissonFVMGSolverBase::restrict(
   // We're assuming the cells are uniform
   assert(src.cells_x() == 2 * cells_x());
   assert(src.cells_y() == 2 * cells_y());
+
   for(int i = 0; i < cells_x(); i++) {
     for(int j = 0; j < cells_y(); j++) {
+      // The restriction sets the source to the average of the residual for the
+      // cells in the same area
       source_[{i, j}] =
-          0.25 *
+          -0.25 *
           (src.delta(2 * i, 2 * j) + src.delta(2 * i, 2 * j + 1) +
            src.delta(2 * i + 1, 2 * j) + src.delta(2 * i + 1, 2 * j + 1));
       // It's not clear how to best precondition the coarser grids, so just
@@ -189,21 +242,33 @@ void PoissonFVMGSolverBase::restrict(
       cv_average(i, j) = 0.0;
     }
   }
+  // Check the boundaries of the source term here
+  // make certain they're still NaN
+  // This is the only non-initializing place that the source terms are
+  // (supposed to be) modified, so it makes the most sense to check here
+  for(int i = -1; i <= source_.cells_x(); i++) {
+    assert(std::isnan(source_[{i, -1}]));
+    assert(std::isnan(source_[{i, source_.cells_y()}]));
+  }
+  for(int j = -1; j <= source_.cells_y(); j++) {
+    assert(std::isnan(source_[{-1, j}]));
+    assert(std::isnan(source_[{source_.cells_x(), j}]));
+  }
 }
 
 real PoissonFVMGSolverBase::prolongate(Mesh &dest) const noexcept {
   assert(dest.cells_x() == 2 * cells_x());
   assert(dest.cells_y() == 2 * cells_y());
   real max_diff = -std::numeric_limits<real>::infinity();
+  // Because we the values in our boundaries are incomplete, only use
+  // interpolation to set the cells which aren't next to the boundaries
   for(int i = 0; i < dest.cells_x(); i++) {
     const real x = dest.median_x(i);
     for(int j = 0; j < dest.cells_y(); j++) {
       const real y = dest.median_y(j);
-      // The less accurate alternative
-      // const real diff = cv_average(i / 2, j / 2);
       const real diff = interpolate(x, y);
       max_diff        = std::max(max_diff, diff);
-      dest[{i, j}] -= diff;
+      dest[{i, j}] += diff;
     }
   }
   return max_diff;
@@ -225,6 +290,24 @@ PoissonFVMGSolver<mg_levels_>::PoissonFVMGSolver(
                 zero_source) {
   assert(cells_x % (1 << (mg_levels_ - 1)) == 0);
   assert(cells_y % (1 << (mg_levels_ - 1)) == 0);
+  assert(multilev_.bc_.bottom_bc().first == bc_.bottom_bc().first);
+  assert(multilev_.bc_.top_bc().first == bc_.top_bc().first);
+  for(int i = 0; i < cells_x; i++) {
+    const real bottom_y = this->bottom_y(0);
+    const real x        = median_x(i);
+    assert(multilev_.bc_.bottom_bc().second(x, bottom_y) == 0.0);
+    const real top_y = this->top_y(cells_y);
+    assert(multilev_.bc_.top_bc().second(x, top_y) == 0.0);
+  }
+  assert(multilev_.bc_.left_bc().first == bc_.left_bc().first);
+  assert(multilev_.bc_.right_bc().first == bc_.right_bc().first);
+  for(int j = 0; j < cells_y; j++) {
+    const real left_x = this->left_x(0);
+    const real y      = median_y(j);
+    assert(multilev_.bc_.left_bc().second(left_x, y) == 0.0);
+    const real right_x = this->right_x(cells_x);
+    assert(multilev_.bc_.right_bc().second(right_x, y) == 0.0);
+  }
 }
 
 template <int mg_levels_>
@@ -238,6 +321,24 @@ PoissonFVMGSolver<mg_levels_>::PoissonFVMGSolver(
                 zero_source) {
   assert(cells_x % (1 << (mg_levels_ - 1)) == 0);
   assert(cells_y % (1 << (mg_levels_ - 1)) == 0);
+  assert(multilev_.bc_.bottom_bc().first == bc_.bottom_bc().first);
+  assert(multilev_.bc_.top_bc().first == bc_.top_bc().first);
+  for(int i = 0; i < cells_x; i++) {
+    const real bottom_y = this->bottom_y(0);
+    const real x        = median_x(i);
+    assert(multilev_.bc_.bottom_bc().second(x, bottom_y) == 0.0);
+    const real top_y = this->top_y(cells_y);
+    assert(multilev_.bc_.top_bc().second(x, top_y) == 0.0);
+  }
+  assert(multilev_.bc_.left_bc().first == bc_.left_bc().first);
+  assert(multilev_.bc_.right_bc().first == bc_.right_bc().first);
+  for(int j = 0; j < cells_y; j++) {
+    const real left_x = this->left_x(0);
+    const real y      = median_y(j);
+    assert(multilev_.bc_.left_bc().second(left_x, y) == 0.0);
+    const real right_x = this->right_x(cells_x);
+    assert(multilev_.bc_.right_bc().second(right_x, y) == 0.0);
+  }
 }
 
 PoissonFVMGSolver<1>::PoissonFVMGSolver(const std::pair<real, real> &corner_1,

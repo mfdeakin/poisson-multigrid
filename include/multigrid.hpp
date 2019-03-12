@@ -151,13 +151,13 @@ class PoissonFVMGSolverBase : public Mesh {
   void restrict(const PoissonFVMGSolverBase &src) noexcept;
   real prolongate(Mesh &dest) const noexcept;
 
+  const BoundaryConditions &bconds() const noexcept { return bc_; }
   const Mesh &source() const noexcept { return source_; }
   real poisson_pgs_or(const real or_term = 1.5) noexcept;
   real delta(const int i, const int j) const noexcept;
 
  protected:
   BoundaryConditions bc_;
-
   Mesh source_;
 };
 
@@ -186,6 +186,8 @@ class PoissonFVMGSolver : public PoissonFVMGSolverBase {
     return max_delta;
   }
 
+  const Coarsen &error_mesh() { return multilev_; };
+
   template <int>
   friend class PoissonFVMGSolver;
 
@@ -211,8 +213,11 @@ class PoissonFVMGSolver : public PoissonFVMGSolverBase {
         iterations++;
       } else {
         // level < mg_levels_; run pgs at a more coarse scale
+        // We need the boundary conditions to hold when computing the residual
+        bc_.apply(*this);
         multilev_.restrict(*this);
         auto [iter_processed, delta] = multilev_.solve_int(iterations, end);
+        multilev_.bc_.apply(multilev_);
         max_delta += multilev_.prolongate(*this);
         iterations = iter_processed;
       }
